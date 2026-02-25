@@ -102,75 +102,94 @@ def draw_info_panel(frame: np.ndarray, prediction: str = None,
                     collecting_word: str = None, sample_count: int = 0) -> np.ndarray:
     """
     Draw an information overlay panel on the frame.
-    
-    Args:
-        frame: BGR frame to draw on.
-        prediction: Current predicted word.
-        confidence: Prediction confidence (0-1).
-        sentence: List of recognized words.
-        fps: Current FPS.
-        mode: Current mode ('RECOGNIZE' or 'COLLECT').
-        collecting_word: Word being collected (in collect mode).
-        sample_count: Number of samples collected.
-    
-    Returns:
-        Frame with overlay drawn.
+    All positions scale relative to frame size so it works with
+    any resolution — landscape, portrait, or square.
     """
     h, w = frame.shape[:2]
     output = frame.copy()
     
-    # ── Top bar: Mode + FPS ──────────────────────────────────────────────────
-    cv2.rectangle(output, (0, 0), (w, 50), (40, 40, 40), -1)
-    cv2.putText(output, f"ISL Recognition | Mode: {mode}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 200), 2)
-    cv2.putText(output, f"FPS: {fps:.1f}", (w - 130, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    # Scale factor based on frame width (reference: 640px)
+    s = max(w / 640, 0.5)
+    pad = int(10 * s)
     
-    if mode == "RECOGNIZE":
+    # ── Top bar: Mode + FPS ──────────────────────────────────────────────────
+    top_h = int(45 * s)
+    cv2.rectangle(output, (0, 0), (w, top_h), (40, 40, 40), -1)
+    cv2.putText(output, f"ISL | {mode}", (pad, int(28 * s)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6 * s, (0, 255, 200), max(1, int(2 * s)))
+    fps_text = f"FPS: {fps:.0f}"
+    cv2.putText(output, fps_text, (w - int(110 * s), int(28 * s)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5 * s, (200, 200, 200), max(1, int(s)))
+    
+    if mode in ("RECOGNIZE", "WEBCAM", "VIDEO"):
         # ── Prediction box ───────────────────────────────────────────────────
         if prediction:
-            # Background
-            cv2.rectangle(output, (10, 60), (350, 130), (30, 30, 30), -1)
-            cv2.rectangle(output, (10, 60), (350, 130), (0, 255, 200), 2)
+            box_y1 = top_h + pad
+            box_y2 = box_y1 + int(70 * s)
+            box_x2 = min(w - pad, int(340 * s))
             
-            # Word
-            cv2.putText(output, prediction, (20, 100),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 200), 3)
+            # Semi-transparent background
+            overlay = output.copy()
+            cv2.rectangle(overlay, (pad, box_y1), (box_x2, box_y2), (20, 20, 20), -1)
+            cv2.addWeighted(overlay, 0.7, output, 0.3, 0, output)
+            cv2.rectangle(output, (pad, box_y1), (box_x2, box_y2), (0, 255, 200), 2)
+            
+            # Word — large and bold
+            word_font_scale = min(1.2 * s, (box_x2 - pad - 10) / (len(prediction) * 22 + 1))
+            word_font_scale = max(word_font_scale, 0.5)
+            cv2.putText(output, prediction, (pad + int(8 * s), box_y2 - int(25 * s)),
+                        cv2.FONT_HERSHEY_SIMPLEX, word_font_scale, (0, 255, 200),
+                        max(2, int(2.5 * s)))
+            
+            # Confidence percentage
+            conf_text = f"{confidence:.0%}"
+            conf_color = (0, 255, 0) if confidence > 0.8 else (0, 200, 255)
+            cv2.putText(output, conf_text, (pad + int(8 * s), box_y1 + int(20 * s)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55 * s, conf_color,
+                        max(1, int(1.5 * s)))
             
             # Confidence bar
-            bar_width = int(200 * confidence)
-            bar_color = (0, 255, 0) if confidence > 0.8 else (0, 200, 255) if confidence > 0.6 else (0, 100, 255)
-            cv2.rectangle(output, (200, 80), (200 + bar_width, 100), bar_color, -1)
-            cv2.rectangle(output, (200, 80), (400, 100), (100, 100, 100), 1)
-            cv2.putText(output, f"{confidence:.0%}", (405, 97),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            bar_y = box_y2 - int(12 * s)
+            bar_x1 = box_x2 - int(110 * s)
+            bar_x2 = box_x2 - int(10 * s)
+            bar_fill = bar_x1 + int((bar_x2 - bar_x1) * confidence)
+            cv2.rectangle(output, (bar_x1, bar_y), (bar_x2, bar_y + int(8 * s)),
+                          (60, 60, 60), -1)
+            cv2.rectangle(output, (bar_x1, bar_y), (bar_fill, bar_y + int(8 * s)),
+                          conf_color, -1)
         
         # ── Sentence output bar (bottom) ─────────────────────────────────────
         if sentence:
-            cv2.rectangle(output, (0, h - 50), (w, h), (40, 40, 40), -1)
-            sentence_text = " → ".join(sentence[-8:])  # Show last 8 words
-            cv2.putText(output, sentence_text, (10, h - 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            sent_h = int(45 * s)
+            overlay = output.copy()
+            cv2.rectangle(overlay, (0, h - sent_h), (w, h), (30, 30, 30), -1)
+            cv2.addWeighted(overlay, 0.8, output, 0.2, 0, output)
+            sentence_text = " > ".join(sentence[-6:])
+            cv2.putText(output, sentence_text, (pad, h - int(15 * s)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55 * s, (255, 255, 255),
+                        max(1, int(1.5 * s)))
     
     elif mode == "COLLECT":
-        # ── Collection info ──────────────────────────────────────────────────
-        cv2.rectangle(output, (10, 60), (400, 140), (30, 30, 30), -1)
-        cv2.rectangle(output, (10, 60), (400, 140), (0, 200, 255), 2)
+        box_y1 = top_h + pad
+        box_y2 = box_y1 + int(70 * s)
+        cv2.rectangle(output, (pad, box_y1), (int(380 * s), box_y2),
+                      (30, 30, 30), -1)
+        cv2.rectangle(output, (pad, box_y1), (int(380 * s), box_y2),
+                      (0, 200, 255), 2)
         
         if collecting_word:
-            cv2.putText(output, f"Collecting: {collecting_word}", (20, 95),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
-            cv2.putText(output, f"Samples: {sample_count}/{config.SAMPLES_PER_WORD}", 
-                        (20, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+            cv2.putText(output, f"Collecting: {collecting_word}",
+                        (pad + 10, box_y1 + int(30 * s)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7 * s, (0, 200, 255),
+                        max(1, int(2 * s)))
+            cv2.putText(output, f"Samples: {sample_count}/{config.SAMPLES_PER_WORD}",
+                        (pad + 10, box_y2 - int(10 * s)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 * s, (200, 200, 200),
+                        max(1, int(s)))
         else:
-            cv2.putText(output, "Press 's' to start recording", (20, 95),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
-    
-    # ── Controls help (bottom-right) ─────────────────────────────────────────
-    help_text = "Q: Quit"
-    if mode == "COLLECT":
-        help_text = "S: Record | R: Reset | Q: Quit"
-    cv2.putText(output, help_text, (w - 300, h - 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+            cv2.putText(output, "Press 's' to start",
+                        (pad + 10, box_y1 + int(35 * s)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6 * s, (200, 200, 200),
+                        max(1, int(1.5 * s)))
     
     return output

@@ -21,17 +21,21 @@ from src.dataset import load_dataset, save_dataset_npz, load_dataset_npz
 from src.feature_engineer import build_feature_vector, normalize_sequence
 from src.model import build_model, train_model, save_model, plot_training_history
 from src.utils import load_vocabulary, save_vocabulary
+from src.augment_landmarks import augment_sequence
 
 
 def augment_sequences(X: np.ndarray, y: np.ndarray, 
-                      augment_factor: int = 3) -> tuple:
+                      augment_factor: int = 5) -> tuple:
     """
-    Augment training data by adding noise and time-warping.
+    Augment training data using landmark-level augmentations.
+    
+    Uses noise, scale jitter, 2D rotation, time warping, landmark 
+    dropout, and hand swapping to simulate signer variation.
     
     Args:
-        X: Original sequences.
-        y: Original labels.
-        augment_factor: How many augmented copies per original sample.
+        X: Original sequences (N, seq_len, features).
+        y: Original labels (N,).
+        augment_factor: Augmented copies per original sample.
     
     Returns:
         Tuple of (augmented_X, augmented_y).
@@ -40,33 +44,15 @@ def augment_sequences(X: np.ndarray, y: np.ndarray,
     y_aug = [y]
     
     for i in range(augment_factor):
-        # Add random noise to landmarks
-        noise_level = 0.01 * (i + 1)
-        noisy = X + np.random.normal(0, noise_level, X.shape).astype(np.float32)
-        X_aug.append(noisy)
-        y_aug.append(y)
-    
-    # Time warping: slightly speed up / slow down sequences
-    for _ in range(augment_factor // 2 + 1):
-        warped = []
-        for seq in X:
-            # Randomly skip or duplicate 10% of frames
-            indices = list(range(len(seq)))
-            for j in range(len(indices) // 10):
-                idx = np.random.randint(0, len(indices))
-                if np.random.random() > 0.5 and len(indices) > config.SEQUENCE_LENGTH // 2:
-                    indices.pop(idx)
-                else:
-                    indices.insert(idx, indices[idx])
-            
-            # Resample to original length
-            selected = np.array([seq[min(i, len(seq)-1)] for i in indices[:config.SEQUENCE_LENGTH]])
-            if len(selected) < config.SEQUENCE_LENGTH:
-                pad = np.zeros((config.SEQUENCE_LENGTH - len(selected), seq.shape[1]))
-                selected = np.vstack([selected, pad])
-            warped.append(selected[:config.SEQUENCE_LENGTH])
+        # Increase intensity gradually for more diversity
+        intensity = 0.5 + (i / augment_factor) * 1.0
         
-        X_aug.append(np.array(warped, dtype=np.float32))
+        batch = []
+        for seq in X:
+            aug = augment_sequence(seq, intensity=intensity)
+            batch.append(aug)
+        
+        X_aug.append(np.array(batch, dtype=np.float32))
         y_aug.append(y)
     
     return np.concatenate(X_aug), np.concatenate(y_aug)

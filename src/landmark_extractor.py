@@ -131,38 +131,44 @@ class LandmarkExtractor:
     
     def _normalize_to_body(self, left_hand, right_hand, pose, pose_landmarks):
         """
-        Normalize all landmarks relative to the mid-point of shoulders
-        for translation invariance.
+        Normalize all landmarks for translation AND scale invariance.
         
-        Args:
-            left_hand: Left hand landmark array.
-            right_hand: Right hand landmark array.
-            pose: Pose landmark array.
-            pose_landmarks: Raw MediaPipe pose landmarks.
+        1. Translate: subtract shoulder midpoint (translation invariance)
+        2. Scale: divide by shoulder width (body-size invariance)
         
-        Returns:
-            Tuple of normalized (left_hand, right_hand, pose) arrays.
+        This ensures the same sign produces identical features regardless
+        of the signer's body size or distance from camera.
         """
         if pose_landmarks is None:
             return left_hand, right_hand, pose
         
-        # Get shoulder midpoint as reference
+        # Get shoulder landmarks
         left_shoulder = pose_landmarks.landmark[11]
         right_shoulder = pose_landmarks.landmark[12]
         
+        # Translation reference: shoulder midpoint
         ref_x = (left_shoulder.x + right_shoulder.x) / 2
         ref_y = (left_shoulder.y + right_shoulder.y) / 2
         ref_z = (left_shoulder.z + right_shoulder.z) / 2
-        
         ref_point = np.array([ref_x, ref_y, ref_z], dtype=np.float32)
         
-        # Subtract reference point from all landmarks (tiled for each landmark)
+        # Scale reference: shoulder width (Euclidean distance)
+        shoulder_dist = np.sqrt(
+            (left_shoulder.x - right_shoulder.x) ** 2 +
+            (left_shoulder.y - right_shoulder.y) ** 2 +
+            (left_shoulder.z - right_shoulder.z) ** 2
+        )
+        # Avoid division by zero; use fallback if shoulders not detected properly
+        if shoulder_dist < 1e-6:
+            shoulder_dist = 0.3  # reasonable default in normalized coords
+        
         def normalize_array(arr, num_landmarks):
             if np.all(arr == 0):
                 return arr
             reshaped = arr.reshape(num_landmarks, 3)
-            reshaped -= ref_point
-            return reshaped.flatten()
+            reshaped -= ref_point       # translation invariance
+            reshaped /= shoulder_dist   # scale invariance
+            return reshaped.flatten().astype(np.float32)
         
         left_hand = normalize_array(left_hand, config.NUM_HAND_LANDMARKS)
         right_hand = normalize_array(right_hand, config.NUM_HAND_LANDMARKS)

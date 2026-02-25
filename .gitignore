@@ -1,0 +1,16 @@
+# Data & models (too large for git)
+data/
+models/
+*.npz
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
