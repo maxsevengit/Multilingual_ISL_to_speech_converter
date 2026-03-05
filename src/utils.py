@@ -99,7 +99,8 @@ class FPSCounter:
 def draw_info_panel(frame: np.ndarray, prediction: str = None, 
                     confidence: float = 0.0, sentence: list = None,
                     fps: float = 0.0, mode: str = "RECOGNIZE",
-                    collecting_word: str = None, sample_count: int = 0) -> np.ndarray:
+                    collecting_word: str = None, sample_count: int = 0,
+                    translation: str = None, target_language: str = "English") -> np.ndarray:
     """
     Draw an information overlay panel on the frame.
     All positions scale relative to frame size so it works with
@@ -158,9 +159,27 @@ def draw_info_panel(frame: np.ndarray, prediction: str = None,
             cv2.rectangle(output, (bar_x1, bar_y), (bar_fill, bar_y + int(8 * s)),
                           conf_color, -1)
         
+        # ── Translation Output (above sentence bar) ──────────────────────────
+        sent_h = int(45 * s)
+        trans_offset = 0
+        if translation:
+            trans_h = int(50 * s)
+            trans_offset = trans_h
+            t_y1 = h - sent_h - trans_h
+            t_y2 = h - sent_h
+            
+            overlay = output.copy()
+            cv2.rectangle(overlay, (0, t_y1), (w, t_y2), (80, 20, 60), -1)
+            cv2.addWeighted(overlay, 0.85, output, 0.15, 0, output)
+            cv2.putText(output, translation, (pad, t_y2 - int(15 * s)),
+                        # Draw some special text for Hindi/regional via OpenCV if possible, 
+                        # but standard cv2.putText does not support complex Indic scripts perfectly. 
+                        # We will draw it anyway (it will show English well, Indic might be blocky without Pillow)
+                        cv2.FONT_HERSHEY_DUPLEX, 0.65 * s, (255, 230, 200),
+                        max(1, int(1.6 * s)))
+        
         # ── Sentence output bar (bottom) ─────────────────────────────────────
-        if sentence:
-            sent_h = int(45 * s)
+        if sentence is not None:
             overlay = output.copy()
             cv2.rectangle(overlay, (0, h - sent_h), (w, h), (30, 30, 30), -1)
             cv2.addWeighted(overlay, 0.8, output, 0.2, 0, output)
@@ -168,6 +187,14 @@ def draw_info_panel(frame: np.ndarray, prediction: str = None,
             cv2.putText(output, sentence_text, (pad, h - int(15 * s)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55 * s, (255, 255, 255),
                         max(1, int(1.5 * s)))
+                        
+            # Target Language indicator
+            lang_text = f"Lang: {target_language} (L)"
+            # Align right
+            text_size = cv2.getTextSize(lang_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5 * s, max(1, int(s)))[0]
+            cv2.putText(output, lang_text, (w - text_size[0] - pad, h - int(15 * s)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 * s, (150, 200, 255),
+                        max(1, int(s)))
     
     elif mode == "COLLECT":
         box_y1 = top_h + pad

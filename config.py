@@ -52,8 +52,8 @@ EPOCHS = 100
 BATCH_SIZE = 32
 
 # ─── Recognition Engine ──────────────────────────────────────────────────────
-CONFIDENCE_THRESHOLD = 0.6    # Minimum confidence to accept a prediction
-SMOOTHING_WINDOW = 5          # Number of recent predictions for majority vote
+CONFIDENCE_THRESHOLD = 0.85   # Increased from 0.6 to reduce false positives
+SMOOTHING_WINDOW = 10         # Increased from 5 (requires 10 consecutive identical predictions)
 DUPLICATE_COOLDOWN = 15       # Frames before allowing same word again
 
 # ─── Data Collection ─────────────────────────────────────────────────────────

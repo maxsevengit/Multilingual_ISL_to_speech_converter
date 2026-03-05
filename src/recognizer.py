@@ -114,7 +114,10 @@ class GestureRecognizer:
         # Accept the word
         self.last_word = smoothed_word
         self.last_word_frame = self.frame_count
-        self.sentence.append(smoothed_word)
+        
+        # We don't want "IDLE" showing up in the user's sentence
+        if smoothed_word != "IDLE":
+            self.sentence.append(smoothed_word)
         
         return smoothed_word, smoothed_confidence
     

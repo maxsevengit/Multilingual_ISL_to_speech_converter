@@ -64,6 +64,7 @@ def main():
     parser.add_argument('--velocity', action='store_true', help='Include velocity features')
     parser.add_argument('--epochs', type=int, default=config.EPOCHS, help='Training epochs')
     parser.add_argument('--batch-size', type=int, default=config.BATCH_SIZE, help='Batch size')
+    parser.add_argument('--data-dir', type=str, default=config.DATA_DIR, help='Path to raw .npy samples directory')
     parser.add_argument('--reload', action='store_true', help='Reload from raw data (ignore cached .npz)')
     args = parser.parse_args()
     
@@ -74,13 +75,15 @@ def main():
     # ── Load dataset ─────────────────────────────────────────────────────────
     X, y, label_names = None, None, None
     
-    if not args.reload and os.path.exists(config.DATASET_PATH):
-        print("\n[STEP 1] Loading cached dataset...")
-        X, y, label_names = load_dataset_npz()
+    dataset_npz_path = os.path.join(args.data_dir, "dataset.npz")
+    
+    if not args.reload and os.path.exists(dataset_npz_path):
+        print(f"\n[STEP 1] Loading cached dataset from {dataset_npz_path}...")
+        X, y, label_names = load_dataset_npz(dataset_npz_path)
     
     if X is None:
-        print("\n[STEP 1] Loading data from raw samples...")
-        X, y, label_names = load_dataset()
+        print(f"\n[STEP 1] Loading data from raw samples in {args.data_dir}...")
+        X, y, label_names = load_dataset(args.data_dir)
         
         if X is None:
             print("\n[ERROR] No training data found!")
@@ -91,7 +94,7 @@ def main():
             return
         
         # Cache for faster future loading
-        save_dataset_npz(X, y, label_names)
+        save_dataset_npz(X, y, label_names, dataset_npz_path)
     
     num_classes = len(label_names)
     

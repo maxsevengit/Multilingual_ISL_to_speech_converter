@@ -127,10 +127,12 @@ def collect_training_data(word: str, num_samples: int = None):
                     sample_count += 1
                     recording = False
                     frame_buffer = []
-                    print(f"  [SAVED] Sample {sample_count}/{num_samples} saved to {save_path}")
                     
-                    if sample_count >= num_samples:
-                        print(f"\n  [DONE] Collected {num_samples} samples for '{word}'!")
+                    collected_this_session = sample_count - existing
+                    print(f"  [SAVED] Sample {collected_this_session}/{num_samples} saved to {save_path}")
+                    
+                    if collected_this_session >= num_samples:
+                        print(f"\n  [DONE] Collected {num_samples} new samples for '{word}'!")
                         break
             
             # Draw info panel

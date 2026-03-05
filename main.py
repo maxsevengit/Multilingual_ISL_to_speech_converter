@@ -14,6 +14,10 @@ Usage:
 
 import argparse
 import sys
+import os
+import warnings
+warnings.filterwarnings("ignore")
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import cv2
 import numpy as np
 import config
@@ -23,6 +27,7 @@ from src.recognizer import GestureRecognizer
 from src.dataset import collect_training_data
 from src.model import load_model
 from src.utils import load_vocabulary, FPSCounter, draw_info_panel
+from src.translator import ISLTranslator
 
 
 def _open_video_source(video_path: str = None):
@@ -106,6 +111,7 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
     # ── Initialize components (SAME for both modes) ──────────────────────────
     extractor = LandmarkExtractor()
     recognizer = GestureRecognizer(model, label_names, use_velocity)
+    translator = ISLTranslator()
     fps_counter = FPSCounter()
     paused = False
     
@@ -132,7 +138,9 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
     if not is_webcam:
         print(f"  Video: {source_name}")
         print(f"  Press SPACE to pause/resume")
-    print(f"  Press 'q' to quit, 'c' to clear sentence")
+    print(f"  Press 'q' to quit, 'c' to clear")
+    print(f"  Press 't' to translate sentence")
+    print(f"  Press 'l' to change language")
     print(f"{'='*50}\n")
     
     try:
@@ -178,9 +186,12 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
             confidence = 0.0
             
             if extractor.has_hands(results):
-                word, confidence = recognizer.update(landmarks)
+                raw_word, raw_confidence = recognizer.update(landmarks)
                 
-                if word is not None:
+                # Treat 'IDLE' as a background class — do not add to sentence
+                if raw_word is not None and raw_word != "IDLE":
+                    word = raw_word
+                    confidence = raw_confidence
                     print(f"  ✓ Recognized: {word} ({confidence:.0%})")
             
             # ═════════════════════════════════════════════════════════════════
@@ -197,7 +208,9 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
                 confidence=current_conf,
                 sentence=sentence,
                 fps=fps,
-                mode=mode_label
+                mode=mode_label,
+                translation=translator.last_translation,
+                target_language=translator.get_current_language()
             )
             
             # ── Show hand detection status ───────────────────────────────────
@@ -239,6 +252,15 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
             elif key == ord('r'):
                 recognizer.reset()
                 print("  [RESET] Recognizer reset.")
+            elif key == ord('t'):
+                if sentence:
+                    print(f"  [TRANSLATE] Generating {translator.get_current_language()} speech...")
+                    translator.translate_and_speak_async(sentence)
+                else:
+                    print("  [WARNING] Empty sentence, nothing to translate.")
+            elif key == ord('l'):
+                new_lang = translator.next_language()
+                print(f"  [LANGUAGE] Switched to {new_lang}")
             elif key == ord(' ') and not is_webcam:
                 paused = True
                 print("  [PAUSED] Press SPACE to resume.")

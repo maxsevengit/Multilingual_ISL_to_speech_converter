@@ -6,6 +6,7 @@
         "GOOD_MORNING",
         "HELLO",
         "HOW_ARE_YOU",
+        "IDLE",
         "MONSOON",
         "SEASON",
         "SPRING",
@@ -19,11 +20,12 @@
         "GOOD_MORNING": 3,
         "HELLO": 4,
         "HOW_ARE_YOU": 5,
-        "MONSOON": 6,
-        "SEASON": 7,
-        "SPRING": 8,
-        "SUMMER": 9,
-        "WINTER": 10
+        "IDLE": 6,
+        "MONSOON": 7,
+        "SEASON": 8,
+        "SPRING": 9,
+        "SUMMER": 10,
+        "WINTER": 11
     },
     "index_to_word": {
         "0": "ALRIGHT",
@@ -32,11 +34,12 @@
         "3": "GOOD_MORNING",
         "4": "HELLO",
         "5": "HOW_ARE_YOU",
-        "6": "MONSOON",
-        "7": "SEASON",
-        "8": "SPRING",
-        "9": "SUMMER",
-        "10": "WINTER"
+        "6": "IDLE",
+        "7": "MONSOON",
+        "8": "SEASON",
+        "9": "SPRING",
+        "10": "SUMMER",
+        "11": "WINTER"
     },
     "use_velocity": false
 }
