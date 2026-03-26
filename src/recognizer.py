@@ -96,6 +96,11 @@ class GestureRecognizer:
         self.current_prediction = predicted_word
         self.current_confidence = confidence
         
+        # DEBUG: Print top 3 predictions
+        top_indices = np.argsort(predictions)[-3:][::-1]
+        top_preds = [(self.label_names[i], f"{predictions[i]:.2f}") for i in top_indices]
+        print(f"[DEBUG] {len(self.frame_buffer)} frames -> Top 3: {top_preds}")
+        
         # Add to prediction buffer for smoothing
         self.prediction_buffer.append((predicted_word, confidence))
         

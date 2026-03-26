@@ -1,11 +1,17 @@
 """
 Hand & Pose Landmark Extraction Module.
 
-Uses MediaPipe Holistic to extract hand and upper-body pose landmarks
-from video frames. Returns normalized, flat feature vectors suitable
-for temporal sequence modeling.
+Uses MediaPipe Tasks to extract hand landmarks from video frames.
+
+Why Tasks API:
+  - Newer MediaPipe Python builds (notably on newer Python versions)
+    may not ship the legacy `mediapipe.solutions.*` APIs.
+  - Tasks API is stable and works with downloadable `.task` model assets.
 """
 
+from __future__ import annotations
+
+import os
 import numpy as np
 import mediapipe as mp
 import config
@@ -13,26 +19,47 @@ import config
 
 class LandmarkExtractor:
     """
-    Extracts hand and pose landmarks from video frames using MediaPipe Holistic.
-    
-    Produces a flat feature vector per frame:
-      - Left hand:  21 landmarks × 3 coords = 63 values
-      - Right hand: 21 landmarks × 3 coords = 63 values
-      - Pose:       12 landmarks × 3 coords = 36 values (selected upper-body)
-      Total: 162 features per frame
+    Extracts hand landmarks (2 hands max) and returns a flat feature vector.
+
+    Output feature vector per frame:
+      - Left hand:  21 landmarks × 3 coords = 63 values (zero-filled if missing)
+      - Right hand: 21 landmarks × 3 coords = 63 values (zero-filled if missing)
+      Total: 126 features per frame
     """
     
     def __init__(self):
-        self.mp_holistic = mp.solutions.holistic
-        self.mp_drawing = mp.solutions.drawing_utils
-        self.mp_drawing_styles = mp.solutions.drawing_styles
-        
-        self.holistic = self.mp_holistic.Holistic(
-            static_image_mode=False,
-            model_complexity=1,
-            min_detection_confidence=config.MIN_DETECTION_CONFIDENCE,
-            min_tracking_confidence=config.MIN_TRACKING_CONFIDENCE,
+        self.use_pose = bool(config.USE_POSE_LANDMARKS)
+        if self.use_pose:
+            raise NotImplementedError(
+                "Pose landmarks are disabled by default and not implemented "
+                "for the MediaPipe Tasks backend. Set USE_POSE_LANDMARKS=False."
+            )
+
+        if not os.path.exists(config.HAND_LANDMARKER_TASK_PATH):
+            raise FileNotFoundError(
+                f"Missing model asset: {config.HAND_LANDMARKER_TASK_PATH}\n"
+                "Download it once (then it works offline):\n"
+                "  https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+                "hand_landmarker/float16/latest/hand_landmarker.task"
+            )
+
+        from mediapipe.tasks import python as mp_tasks_python
+        from mediapipe.tasks.python import vision
+
+        base_options = mp_tasks_python.BaseOptions(
+            model_asset_path=config.HAND_LANDMARKER_TASK_PATH,
+            delegate=mp_tasks_python.BaseOptions.Delegate.CPU,
         )
+        options = vision.HandLandmarkerOptions(
+            base_options=base_options,
+            num_hands=2,
+        )
+        self._vision = vision
+        self._hand_landmarker = vision.HandLandmarker.create_from_options(options)
+
+        # Timestamp for VIDEO-mode inference (ms)
+        self._ts_ms = 0
+        self._ts_step_ms = 33  # ~30 FPS
     
     def extract_landmarks(self, frame_rgb: np.ndarray) -> np.ndarray:
         """
@@ -45,25 +72,7 @@ class LandmarkExtractor:
             Flat numpy array of shape (NUM_FEATURES,) containing all landmark
             coordinates. Missing landmarks are zero-filled.
         """
-        results = self.holistic.process(frame_rgb)
-        
-        # Extract left hand landmarks
-        left_hand = self._extract_hand_landmarks(results.left_hand_landmarks)
-        
-        # Extract right hand landmarks
-        right_hand = self._extract_hand_landmarks(results.right_hand_landmarks)
-        
-        # Extract selected pose landmarks
-        pose = self._extract_pose_landmarks(results.pose_landmarks)
-        
-        # Normalize relative to body center (mid-point of shoulders)
-        left_hand, right_hand, pose = self._normalize_to_body(
-            left_hand, right_hand, pose, results.pose_landmarks
-        )
-        
-        # Concatenate into single feature vector
-        features = np.concatenate([left_hand, right_hand, pose])
-        
+        features, _ = self.extract_landmarks_with_results(frame_rgb)
         return features
     
     def extract_landmarks_with_results(self, frame_rgb: np.ndarray):
@@ -76,18 +85,15 @@ class LandmarkExtractor:
         Returns:
             Tuple of (features_array, mediapipe_results).
         """
-        results = self.holistic.process(frame_rgb)
-        
-        left_hand = self._extract_hand_landmarks(results.left_hand_landmarks)
-        right_hand = self._extract_hand_landmarks(results.right_hand_landmarks)
-        pose = self._extract_pose_landmarks(results.pose_landmarks)
-        
-        left_hand, right_hand, pose = self._normalize_to_body(
-            left_hand, right_hand, pose, results.pose_landmarks
-        )
-        
-        features = np.concatenate([left_hand, right_hand, pose])
-        
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+
+        # Use VIDEO-style API for consistent timestamps (works for webcam + video)
+        self._ts_ms += self._ts_step_ms
+        results = self._hand_landmarker.detect_for_video(image, self._ts_ms)
+
+        left_hand, right_hand = self._extract_hands_from_tasks_results(results)
+        left_hand, right_hand = self._normalize_hands_only(left_hand, right_hand)
+        features = np.concatenate([left_hand, right_hand])
         return features, results
     
     def _extract_hand_landmarks(self, hand_landmarks) -> np.ndarray:
@@ -104,77 +110,69 @@ class LandmarkExtractor:
             return np.zeros(config.SINGLE_HAND_FEATURES, dtype=np.float32)
         
         landmarks = []
-        for lm in hand_landmarks.landmark:
+        for lm in hand_landmarks:
             landmarks.extend([lm.x, lm.y, lm.z])
         
         return np.array(landmarks, dtype=np.float32)
-    
-    def _extract_pose_landmarks(self, pose_landmarks) -> np.ndarray:
+
+    def _extract_hands_from_tasks_results(self, results) -> tuple[np.ndarray, np.ndarray]:
+        """Extract left/right hands from MediaPipe Tasks results."""
+        left_hand = np.zeros(config.SINGLE_HAND_FEATURES, dtype=np.float32)
+        right_hand = np.zeros(config.SINGLE_HAND_FEATURES, dtype=np.float32)
+
+        hands = getattr(results, "hand_landmarks", None) or []
+        handedness = getattr(results, "handedness", None) or []
+        if not hands:
+            return left_hand, right_hand
+
+        for idx, hand_lms in enumerate(hands):
+            label = None
+            if idx < len(handedness) and handedness[idx]:
+                # handedness[idx] is a list of Category-like objects
+                try:
+                    label = handedness[idx][0].category_name  # 'Left'/'Right'
+                except Exception:
+                    label = None
+
+            arr = self._extract_hand_landmarks(hand_lms)
+            if label == 'Left':
+                left_hand = arr
+            elif label == 'Right':
+                right_hand = arr
+            else:
+                # Unknown: fill first empty slot
+                if np.all(left_hand == 0):
+                    left_hand = arr
+                else:
+                    right_hand = arr
+
+        return left_hand, right_hand
+
+    def _normalize_hands_only(self, left_hand: np.ndarray, right_hand: np.ndarray):
         """
-        Extract selected upper-body pose landmarks.
-        
-        Args:
-            pose_landmarks: MediaPipe pose landmarks or None.
-        
-        Returns:
-            Array of shape (POSE_FEATURES,). Zero-filled if no pose detected.
+        Hands-only normalization (no pose required):
+
+        - Translate each detected hand by its wrist (landmark 0)
+        - Scale by an approximate hand size (wrist→middle_mcp distance)
+
+        This improves invariance for distance-to-camera changes on laptop webcams.
         """
-        if pose_landmarks is None:
-            return np.zeros(config.POSE_FEATURES, dtype=np.float32)
-        
-        landmarks = []
-        for idx in config.POSE_LANDMARK_INDICES:
-            lm = pose_landmarks.landmark[idx]
-            landmarks.extend([lm.x, lm.y, lm.z])
-        
-        return np.array(landmarks, dtype=np.float32)
-    
-    def _normalize_to_body(self, left_hand, right_hand, pose, pose_landmarks):
-        """
-        Normalize all landmarks for translation AND scale invariance.
-        
-        1. Translate: subtract shoulder midpoint (translation invariance)
-        2. Scale: divide by shoulder width (body-size invariance)
-        
-        This ensures the same sign produces identical features regardless
-        of the signer's body size or distance from camera.
-        """
-        if pose_landmarks is None:
-            return left_hand, right_hand, pose
-        
-        # Get shoulder landmarks
-        left_shoulder = pose_landmarks.landmark[11]
-        right_shoulder = pose_landmarks.landmark[12]
-        
-        # Translation reference: shoulder midpoint
-        ref_x = (left_shoulder.x + right_shoulder.x) / 2
-        ref_y = (left_shoulder.y + right_shoulder.y) / 2
-        ref_z = (left_shoulder.z + right_shoulder.z) / 2
-        ref_point = np.array([ref_x, ref_y, ref_z], dtype=np.float32)
-        
-        # Scale reference: shoulder width (Euclidean distance)
-        shoulder_dist = np.sqrt(
-            (left_shoulder.x - right_shoulder.x) ** 2 +
-            (left_shoulder.y - right_shoulder.y) ** 2 +
-            (left_shoulder.z - right_shoulder.z) ** 2
-        )
-        # Avoid division by zero; use fallback if shoulders not detected properly
-        if shoulder_dist < 1e-6:
-            shoulder_dist = 0.3  # reasonable default in normalized coords
-        
-        def normalize_array(arr, num_landmarks):
-            if np.all(arr == 0):
-                return arr
-            reshaped = arr.reshape(num_landmarks, 3)
-            reshaped -= ref_point       # translation invariance
-            reshaped /= shoulder_dist   # scale invariance
-            return reshaped.flatten().astype(np.float32)
-        
-        left_hand = normalize_array(left_hand, config.NUM_HAND_LANDMARKS)
-        right_hand = normalize_array(right_hand, config.NUM_HAND_LANDMARKS)
-        pose = normalize_array(pose, config.NUM_POSE_LANDMARKS)
-        
-        return left_hand, right_hand, pose
+        def normalize_one(hand: np.ndarray) -> np.ndarray:
+            if np.all(hand == 0):
+                return hand
+
+            pts = hand.reshape(config.NUM_HAND_LANDMARKS, 3).copy()
+            wrist = pts[0]
+            pts -= wrist
+
+            # Middle MCP is landmark 9 in MediaPipe Hands
+            scale = float(np.linalg.norm(pts[9]))
+            if scale < 1e-6:
+                scale = 0.1
+            pts /= scale
+            return pts.flatten().astype(np.float32)
+
+        return normalize_one(left_hand), normalize_one(right_hand)
     
     def draw_landmarks(self, frame_bgr: np.ndarray, results) -> np.ndarray:
         """
@@ -182,49 +180,27 @@ class LandmarkExtractor:
         
         Args:
             frame_bgr: BGR image frame.
-            results: MediaPipe Holistic results.
+            results: MediaPipe Tasks results.
         
         Returns:
             BGR frame with landmarks drawn.
         """
         annotated = frame_bgr.copy()
-        
-        # Draw pose landmarks
-        if results.pose_landmarks:
-            self.mp_drawing.draw_landmarks(
-                annotated,
-                results.pose_landmarks,
-                self.mp_holistic.POSE_CONNECTIONS,
-                landmark_drawing_spec=self.mp_drawing_styles.get_default_pose_landmarks_style()
-            )
-        
-        # Draw left hand
-        if results.left_hand_landmarks:
-            self.mp_drawing.draw_landmarks(
-                annotated,
-                results.left_hand_landmarks,
-                self.mp_holistic.HAND_CONNECTIONS,
-                self.mp_drawing_styles.get_default_hand_landmarks_style(),
-                self.mp_drawing_styles.get_default_hand_connections_style()
-            )
-        
-        # Draw right hand
-        if results.right_hand_landmarks:
-            self.mp_drawing.draw_landmarks(
-                annotated,
-                results.right_hand_landmarks,
-                self.mp_holistic.HAND_CONNECTIONS,
-                self.mp_drawing_styles.get_default_hand_landmarks_style(),
-                self.mp_drawing_styles.get_default_hand_connections_style()
-            )
-        
+        hands = getattr(results, "hand_landmarks", None) or []
+        h, w = annotated.shape[:2]
+        for hand in hands:
+            for lm in hand:
+                x = int(np.clip(lm.x * w, 0, w - 1))
+                y = int(np.clip(lm.y * h, 0, h - 1))
+                annotated[y:y + 2, x:x + 2] = (0, 255, 0)
         return annotated
     
     def has_hands(self, results) -> bool:
         """Check if at least one hand is detected in the results."""
-        return (results.left_hand_landmarks is not None or 
-                results.right_hand_landmarks is not None)
+        hands = getattr(results, "hand_landmarks", None) or []
+        return bool(hands)
     
     def release(self):
         """Release MediaPipe resources."""
-        self.holistic.close()
+        if self._hand_landmarker is not None:
+            self._hand_landmarker.close()

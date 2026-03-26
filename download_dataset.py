@@ -78,8 +78,10 @@ DEFAULT_CATEGORIES = [
 ]
 
 
-def download_file(url: str, dest_path: str):
-    """Download a file with progress display."""
+def download_file(url: str, dest_path: str, retries: int = 3):
+    """Download a file with progress display and retry on failure."""
+    import time
+
     def progress_hook(block_num, block_size, total_size):
         downloaded = block_num * block_size
         if total_size > 0:
@@ -93,8 +95,24 @@ def download_file(url: str, dest_path: str):
             sys.stdout.write(f"\r    {mb_down:.1f} MB downloaded")
         sys.stdout.flush()
 
-    urllib.request.urlretrieve(url, dest_path, progress_hook)
-    print()
+    # Ensure the parent folder exists before trying to write
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+    for attempt in range(1, retries + 1):
+        try:
+            # Remove any partial file from a previous failed attempt
+            if os.path.exists(dest_path):
+                os.remove(dest_path)
+            urllib.request.urlretrieve(url, dest_path, progress_hook)
+            print()
+            return  # success
+        except Exception as e:
+            print(f"\n    [WARN] Attempt {attempt}/{retries} failed: {e}")
+            if attempt < retries:
+                print(f"    Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                raise  # re-raise after all retries exhausted
 
 
 def extract_zip(zip_path: str, extract_dir: str):
@@ -114,7 +132,11 @@ def download_category(category: str, download_dir: str):
 
     zip_files = DATASET_CATEGORIES[category]
     print(f"\n  Downloading category: {category} ({len(zip_files)} parts)")
+    
+    # Always ensure the output directory exists
+    os.makedirs(download_dir, exist_ok=True)
 
+    all_ok = True
     for zip_name in zip_files:
         url = f"{ZENODO_BASE}/{zip_name}?download=1"
         zip_path = os.path.join(download_dir, zip_name)
@@ -124,18 +146,20 @@ def download_category(category: str, download_dir: str):
         else:
             print(f"    Downloading {zip_name}...")
             try:
-                download_file(url, zip_path)
+                download_file(url, zip_path)  # has built-in retries
             except Exception as e:
-                print(f"    [ERROR] Failed to download {zip_name}: {e}")
-                return False
+                print(f"    [ERROR] Failed to download {zip_name} after all retries: {e}")
+                all_ok = False
+                continue  # skip to next file instead of crashing everything
 
-        try:
-            extract_zip(zip_path, download_dir)
-        except Exception as e:
-            print(f"    [ERROR] Failed to extract {zip_name}: {e}")
-            return False
+        if os.path.exists(zip_path):
+            try:
+                extract_zip(zip_path, download_dir)
+            except Exception as e:
+                print(f"    [ERROR] Failed to extract {zip_name}: {e}")
+                all_ok = False
 
-    return True
+    return all_ok
 
 
 def list_categories():

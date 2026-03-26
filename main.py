@@ -28,6 +28,7 @@ from src.dataset import collect_training_data
 from src.model import load_model
 from src.utils import load_vocabulary, FPSCounter, draw_info_panel
 from src.translator import ISLTranslator
+from src.hand_segmentation import hand_mask_from_mediapipe_hands, apply_mask
 
 
 def _open_video_source(video_path: str = None):
@@ -177,6 +178,16 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
             
             # 2. Extract landmarks
             landmarks, results = extractor.extract_landmarks_with_results(frame_rgb)
+
+            # Optional novelty: segmentation-guided landmark extraction
+            # If hands-only mode is enabled, we can suppress background pixels
+            # using a fast landmark-derived mask and re-run extraction.
+            if (config.ENABLE_HAND_SEGMENTATION and not config.USE_POSE_LANDMARKS):
+                mask = hand_mask_from_mediapipe_hands(results, processed)
+                if mask is not None and np.any(mask):
+                    masked_bgr = apply_mask(processed, mask, background=0)
+                    masked_rgb = convert_color(masked_bgr, 'RGB')
+                    landmarks, results = extractor.extract_landmarks_with_results(masked_rgb)
             
             # 3. Draw landmarks on display frame
             display = extractor.draw_landmarks(processed, results)
