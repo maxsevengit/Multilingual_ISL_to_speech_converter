@@ -8,6 +8,7 @@ and preparation of training data from collected gesture sequences.
 import os
 import json
 import time
+import re
 import cv2
 import numpy as np
 import config
@@ -15,6 +16,78 @@ from src.preprocessing import normalize_frame, convert_color
 from src.landmark_extractor import LandmarkExtractor
 from src.feature_engineer import create_sequence, sliding_windows, build_feature_vector
 from src.utils import load_vocabulary, add_word_to_vocabulary, FPSCounter, draw_info_panel
+
+
+def normalize_label_name(name: str) -> str:
+    """
+    Normalize label names so numbered and example-prefixed folders
+    map to the same canonical word.
+    """
+    if name is None:
+        return ""
+
+    label = str(name).strip().upper().replace(" ", "_")
+
+    # Strip common prefixes like "48._" or "EX._"
+    label = re.sub(r"^\d+\._", "", label)
+    label = re.sub(r"^EX\._", "", label)
+    label = re.sub(r"^\d+[_\.]+", "", label)
+
+    return label
+
+
+def normalize_labels(X: np.ndarray, y: np.ndarray, label_names: list):
+    """
+    Merge duplicated labels after normalization and remap y accordingly.
+    """
+    if X is None or y is None or label_names is None:
+        return X, y, label_names
+
+    normalized = [normalize_label_name(name) for name in label_names]
+
+    label_to_new_index = {}
+    new_label_names = []
+    old_to_new = {}
+
+    for old_idx, norm_name in enumerate(normalized):
+        if norm_name not in label_to_new_index:
+            label_to_new_index[norm_name] = len(new_label_names)
+            new_label_names.append(norm_name)
+        old_to_new[old_idx] = label_to_new_index[norm_name]
+
+    # Remap y
+    y_new = np.array([old_to_new[int(idx)] for idx in y], dtype=np.int32)
+
+    return X, y_new, new_label_names
+
+
+def filter_labels(X: np.ndarray, y: np.ndarray, label_names: list, allowed: list):
+    """
+    Keep only labels present in the allowed list (after normalization).
+    Remap labels to contiguous indices.
+    """
+    if X is None or y is None or label_names is None:
+        return X, y, label_names
+
+    allowed_set = {normalize_label_name(name) for name in allowed}
+    normalized = [normalize_label_name(name) for name in label_names]
+    normalized_set = set(normalized)
+
+    # Build mapping for allowed labels (preserve allowed list order)
+    new_label_names = []
+    for name in allowed:
+        norm = normalize_label_name(name)
+        if norm in allowed_set and norm in normalized_set and norm not in new_label_names:
+            new_label_names.append(norm)
+    new_index = {name: i for i, name in enumerate(new_label_names)}
+
+    keep_mask = np.array([normalized[int(idx)] in allowed_set for idx in y])
+    X_filtered = X[keep_mask]
+    y_filtered = y[keep_mask]
+
+    y_new = np.array([new_index[normalized[int(idx)]] for idx in y_filtered], dtype=np.int32)
+
+    return X_filtered, y_new, new_label_names
 
 
 def collect_training_data(word: str, num_samples: int = None):
@@ -78,12 +151,15 @@ def collect_training_data(word: str, num_samples: int = None):
             if not ret:
                 break
             
+            # ── Mirror for webcam (natural interaction) ──────────────────────
+            frame = cv2.flip(frame, 1)
+            
             # Preprocess
             frame = normalize_frame(frame)
             frame_rgb = convert_color(frame, 'RGB')
             
-            # Extract landmarks
-            features, results = extractor.extract_landmarks_with_results(frame_rgb)
+            # Extract landmarks (pass mirrored=True for standard webcam)
+            features, results = extractor.extract_landmarks_with_results(frame_rgb, mirrored=True)
             
             # Draw landmarks on frame
             display = extractor.draw_landmarks(frame, results)
@@ -208,19 +284,51 @@ def load_dataset(data_dir: str = None):
         if not sample_files:
             continue
         
-        label_names.append(word)
-        print(f"  Loading '{word}': {len(sample_files)} samples")
+        loaded = 0
+        skipped_zeros = 0
+        skipped_shape = 0
         
         for sample_file in sample_files:
             sample_path = os.path.join(word_path, sample_file)
             sequence = np.load(sample_path)
             
             # Ensure correct shape
-            if sequence.shape == (config.SEQUENCE_LENGTH, config.NUM_FEATURES):
-                X_all.append(sequence)
-                y_all.append(label_idx)
-            else:
-                print(f"    [SKIP] {sample_file}: unexpected shape {sequence.shape}")
+            if sequence.shape != (config.SEQUENCE_LENGTH, config.NUM_FEATURES):
+                skipped_shape += 1
+                continue
+            
+            # Filter out all-zeros samples (failed MediaPipe detection)
+            if np.all(sequence == 0):
+                skipped_zeros += 1
+                continue
+            
+            # Also filter mostly-zero samples (< 10% non-zero values)
+            nonzero_frac = np.count_nonzero(sequence) / sequence.size
+            if nonzero_frac < 0.05:
+                skipped_zeros += 1
+                continue
+            
+            X_all.append(sequence)
+            y_all.append(label_idx)
+            loaded += 1
+        
+        if loaded > 0:
+            label_names.append(word)
+            # Fix label indices: use the actual label index (length - 1)
+            # since we only append label_names when loaded > 0
+            actual_idx = len(label_names) - 1
+            # Re-assign the correct index for samples just added
+            for i in range(len(y_all) - loaded, len(y_all)):
+                y_all[i] = actual_idx
+            
+            status = f"  Loading '{word}': {loaded} real samples"
+            if skipped_zeros > 0:
+                status += f" (filtered {skipped_zeros} all-zeros)"
+            if skipped_shape > 0:
+                status += f" (skipped {skipped_shape} bad-shape)"
+            print(status)
+        else:
+            print(f"  SKIPPING '{word}': 0 real samples ({skipped_zeros} all-zeros, {skipped_shape} bad-shape)")
     
     if not X_all:
         print("[WARNING] No valid samples found.")

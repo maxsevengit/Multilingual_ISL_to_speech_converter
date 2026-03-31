@@ -109,6 +109,51 @@ def normalize_sequence(sequence: np.ndarray) -> np.ndarray:
     return (sequence - mean) / std
 
 
+def _normalize_hand_vector(hand_vec: np.ndarray) -> np.ndarray:
+    """
+    Normalize a single hand vector (63,) relative to wrist and bounding box.
+    """
+    if hand_vec is None or hand_vec.size == 0:
+        return hand_vec
+
+    points = hand_vec.reshape(-1, 3).astype(np.float32)
+    if np.all(points == 0):
+        return hand_vec
+
+    wrist = points[0].copy()
+    points = points - wrist
+
+    xy = points[:, :2]
+    min_xy = np.min(xy, axis=0)
+    max_xy = np.max(xy, axis=0)
+    scale = float(max(max_xy[0] - min_xy[0], max_xy[1] - min_xy[1], 1e-6))
+
+    points[:, :2] = points[:, :2] / scale
+    points[:, 2] = points[:, 2] / scale
+
+    return points.flatten()
+
+
+def normalize_hands_sequence(sequence: np.ndarray) -> np.ndarray:
+    """
+    Normalize each frame's hand landmarks using wrist + bounding box scale.
+    Works for hands-only or hands+pose feature layouts.
+    """
+    if not config.NORMALIZE_LANDMARKS:
+        return sequence
+
+    seq = sequence.copy().astype(np.float32)
+    lh = config.SINGLE_HAND_FEATURES
+
+    for t in range(seq.shape[0]):
+        left = seq[t, :lh]
+        right = seq[t, lh:2 * lh]
+        seq[t, :lh] = _normalize_hand_vector(left)
+        seq[t, lh:2 * lh] = _normalize_hand_vector(right)
+
+    return seq
+
+
 def sliding_windows(landmarks_list: list, seq_length: int = None, 
                     step_size: int = None) -> list:
     """

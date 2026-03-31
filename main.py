@@ -97,6 +97,8 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
     
     if 'use_velocity' in vocab:
         use_velocity = vocab['use_velocity']
+    if 'sequence_length' in vocab:
+        config.SEQUENCE_LENGTH = int(vocab['sequence_length'])
     
     print(f"[INFO] Vocabulary: {label_names}")
     print(f"[INFO] Velocity features: {'ON' if use_velocity else 'OFF'}")
@@ -176,18 +178,8 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
             processed = normalize_frame(frame)
             frame_rgb = convert_color(processed, 'RGB')
             
-            # 2. Extract landmarks
-            landmarks, results = extractor.extract_landmarks_with_results(frame_rgb)
-
-            # Optional novelty: segmentation-guided landmark extraction
-            # If hands-only mode is enabled, we can suppress background pixels
-            # using a fast landmark-derived mask and re-run extraction.
-            if (config.ENABLE_HAND_SEGMENTATION and not config.USE_POSE_LANDMARKS):
-                mask = hand_mask_from_mediapipe_hands(results, processed)
-                if mask is not None and np.any(mask):
-                    masked_bgr = apply_mask(processed, mask, background=0)
-                    masked_rgb = convert_color(masked_bgr, 'RGB')
-                    landmarks, results = extractor.extract_landmarks_with_results(masked_rgb)
+            # 2. Extract landmarks (Segmentation is handled internally by extractor)
+            landmarks, results = extractor.extract_landmarks_with_results(frame_rgb, mirrored=is_webcam)
             
             # 3. Draw landmarks on display frame
             display = extractor.draw_landmarks(processed, results)

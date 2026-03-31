@@ -86,6 +86,8 @@ class GestureRecognizer:
         
         # Run model inference
         input_data = np.expand_dims(sequence, axis=0)  # Add batch dimension
+        if len(self.model.input_shape) == 2:
+            input_data = input_data.reshape((input_data.shape[0], -1))
         predictions = self.model.predict(input_data, verbose=0)[0]
         
         predicted_idx = np.argmax(predictions)
