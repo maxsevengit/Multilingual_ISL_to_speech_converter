@@ -9,7 +9,7 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data", "raw")
 INCLUDE_DIR = os.path.join(BASE_DIR, "data", "include_videos")
-MODEL_PATH = os.path.join(BASE_DIR, "models", "isl_gesture_model.keras")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "comparison", "comp_tcn.keras")
 VOCAB_PATH = os.path.join(BASE_DIR, "vocab", "words.json")
 DATASET_PATH = os.path.join(BASE_DIR, "data", "dataset.npz")
 
@@ -64,7 +64,7 @@ STEP_SIZE = 10             # Sliding window step for continuous recognition
 
 # ─── Model Architecture ──────────────────────────────────────────────────────
 # MODEL_TYPE: 'lstm' (recommended), 'mlp' (legacy), 'tcn' (1D-CNN)
-MODEL_TYPE = 'lstm'
+MODEL_TYPE = 'tcn'
 
 MLP_UNITS_1 = 128          # First dense layer (MLP mode)
 MLP_UNITS_2 = 64           # Second dense layer (MLP mode)

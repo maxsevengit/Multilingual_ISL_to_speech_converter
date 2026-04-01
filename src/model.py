@@ -128,6 +128,64 @@ def build_mlp_model(num_features: int, num_classes: int,
     return model
 
 
+def build_gru_model(num_features: int, num_classes: int,
+                    seq_length: int = None) -> keras.Model:
+    """
+    Gated Recurrent Unit (GRU) model.
+    Faster than LSTM, similar temporal memory.
+    """
+    if seq_length is None:
+        seq_length = config.SEQUENCE_LENGTH
+
+    inputs = keras.Input(shape=(seq_length, num_features))
+    x = layers.Masking(mask_value=0.0)(inputs)
+    x = layers.GRU(128, return_sequences=True)(x)
+    x = layers.Dropout(0.2)(x)
+    x = layers.GRU(64, return_sequences=False)(x)
+    x = layers.Dense(64, activation="relu")(x)
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
+
+    return keras.Model(inputs, outputs, name="ISL_GRU")
+
+
+def build_transformer_model(num_features: int, num_classes: int,
+                            seq_length: int = None) -> keras.Model:
+    """
+    Simplified Transformer model using Multi-Head Attention.
+    """
+    if seq_length is None:
+        seq_length = config.SEQUENCE_LENGTH
+
+    inputs = keras.Input(shape=(seq_length, num_features))
+    
+    # Simple Positional Encoding (adding time step info)
+    positions = tf.range(start=0, limit=seq_length, delta=1)
+    pos_encoding = layers.Embedding(input_dim=seq_length, output_dim=num_features)(positions)
+    x = inputs + pos_encoding
+
+    # Multi-Head Attention
+    attention_output = layers.MultiHeadAttention(
+        num_heads=4, key_dim=num_features // 4
+    )(x, x)
+    x = layers.Add()([x, attention_output])
+    x = layers.LayerNormalization()(x)
+
+    # Feed Forward
+    ff_nn = keras.Sequential([
+        layers.Dense(num_features * 2, activation="relu"),
+        layers.Dense(num_features),
+    ])
+    x = layers.Add()([x, ff_nn(x)])
+    x = layers.LayerNormalization()(x)
+
+    # Global Pooling
+    x = layers.GlobalAveragePooling1D()(x)
+    x = layers.Dense(64, activation="relu")(x)
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
+
+    return keras.Model(inputs, outputs, name="ISL_Transformer")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public factory
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,8 +216,12 @@ def build_model(num_features: int, num_classes: int,
         model = build_tcn_model(num_features, num_classes, seq_length)
     elif model_type == "mlp":
         model = build_mlp_model(num_features, num_classes, seq_length)
+    elif model_type == "gru":
+        model = build_gru_model(num_features, num_classes, seq_length)
+    elif model_type == "transformer":
+        model = build_transformer_model(num_features, num_classes, seq_length)
     else:
-        raise ValueError(f"Unknown model_type '{model_type}'. Choose: lstm, tcn, mlp")
+        raise ValueError(f"Unknown model_type '{model_type}'. Choose: lstm, tcn, mlp, gru, transformer")
 
     # Label smoothing reduces overconfidence on small datasets
     loss = keras.losses.CategoricalCrossentropy(

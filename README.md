@@ -11,7 +11,7 @@ A complete pipeline that captures live webcam video, extracts hand landmarks usi
 - **MediaPipe Holistic** for hand and upper-body pose detection
 - **Bi-LSTM model** with batch normalization for gesture classification
 - **Continuous recognition engine** with temporal smoothing, confidence gating, and duplicate suppression
-- **Pre-built INCLUDE dataset integration** — download & process public ISL dataset automatically
+- **INCLUDE dataset integration** — process videos in `data/include_videos`
 - **Built-in data collection mode** to record your own ISL training data and extend the vocabulary
 - **Extensible vocabulary** — easily add new words to the existing model
 
@@ -41,7 +41,7 @@ DIP Project/
 └── tests/                    # Unit tests (48 tests)
 ```
 
-## Quick Start
+## Quick Start (Train on `include_videos` Only)
 
 ### 1. Install Dependencies
 
@@ -50,30 +50,35 @@ cd "DIP Project"
 pip install -r requirements.txt
 ```
 
-### 2. Get Training Data
+### 2. Process INCLUDE Videos
 
-**Option A: Use INCLUDE Public Dataset (Recommended)**
-
-Download and process the INCLUDE ISL dataset automatically:
+Process the videos in `data/include_videos` into landmark sequences:
 
 ```bash
-# Step 1: Download videos from Zenodo (default: 5 categories, ~2-3 GB)
-python download_dataset.py
-
-# See available categories:
-python download_dataset.py --list
-
-# Download specific categories:
-python download_dataset.py --categories Greetings Essentials Food
-
-# Step 2: Process videos into landmark sequences
 python process_videos.py --input data/include_videos
 
-# Process with a word limit (faster for testing):
+# Optional limits (faster for testing):
 python process_videos.py --input data/include_videos --max-words 20
 ```
 
-**Option B: Record Your Own Data**
+### 3. Train the Model
+
+```bash
+python train.py --augment
+
+# Or process INCLUDE videos and train in one command:
+python train.py --process-include --augment
+```
+
+### 4. Run Real-Time Recognition
+
+```bash
+python main.py --mode recognize
+```
+
+Controls: `C` = Clear sentence, `R` = Reset, `Q` = Quit
+
+### Optional: Record Your Own Data
 
 Record gesture samples via webcam for each word:
 
@@ -85,32 +90,7 @@ python main.py --mode collect --word WATER
 
 Controls: `S` = Start recording, `R` = Reset, `Q` = Quit
 
-**Option C: Use Any Video Dataset**
-
-Place videos in `my_videos/WORD_NAME/video.mp4` format and process:
-
-```bash
-python process_videos.py --input my_videos/ --format generic
-```
-
-### 3. Train the Model
-
-```bash
-python train.py --augment
-
-# With velocity features (optional):
-python train.py --augment --velocity
-```
-
-### 4. Run Real-Time Recognition
-
-```bash
-python main.py --mode recognize
-```
-
-Controls: `C` = Clear sentence, `R` = Reset, `Q` = Quit
-
-### 5. Add New Words (Extend Vocabulary)
+### Add New Words (Extend Vocabulary)
 
 After initial training, add new words anytime:
 
@@ -158,15 +138,7 @@ Input (30 frames × 162 features)
 
 ## Dataset: INCLUDE
 
-This project uses the [INCLUDE dataset](https://zenodo.org/record/4010759) — a large-scale ISL dataset with 4,287 videos over 263 word signs from 15 categories, recorded by deaf students. The default download includes 5 categories covering the most common ISL words:
-
-| Category | Example Words |
-|----------|--------------|
-| Greetings | Hello, Thank You, Sorry, Welcome |
-| Essentials | Yes, No, Please, Help, Water |
-| Questions | What, How, Where, When, Why |
-| Family | Mother, Father, Brother, Sister |
-| Feelings | Happy, Sad, Good, Bad, Angry |
+This project processes the videos already present in `data/include_videos` and trains from the derived landmark sequences.
 
 ## Technology Stack
 

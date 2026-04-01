@@ -112,16 +112,22 @@ class ISLTranslator:
             return ""
 
         if self.is_configured and self.model is not None:
-            gloss_str = ", ".join(cleaned)
-            prompt = (
-                f"You are an expert Indian Sign Language translator. "
-                f"Take the following sequence of isolated sign language words (glosses): [{gloss_str}]. "
-                f"Construct a single, fluent, naturally sounding, grammatically correct sentence representing their combined meaning. "
-                f"Translate this final sentence into {target_lang}. "
-                f"Respond ONLY with the translated {target_lang} sentence, nothing else."
-            )
-            response = self.model.generate_content(prompt)
-            return (response.text or "").strip()
+            try:
+                gloss_str = ", ".join(cleaned)
+                prompt = (
+                    f"You are an expert Indian Sign Language translator. "
+                    f"Take the following sequence of isolated sign language words (glosses): [{gloss_str}]. "
+                    f"Construct a single, fluent, naturally sounding, grammatically correct sentence representing their combined meaning. "
+                    f"Translate this final sentence into {target_lang}. "
+                    f"Respond ONLY with the translated {target_lang} sentence, nothing else."
+                )
+                response = self.model.generate_content(prompt)
+                return (response.text or "").strip()
+            except Exception as e:
+                print(f"[WARNING] Gemini translation failed (using offline fallback): {e}")
+                # Disable Gemini for future calls if it fails due to API key errors
+                if "403" in str(e) or "API key" in str(e):
+                    self.is_configured = False
 
         # Offline fallback: simple gloss → sentence
         text = " ".join(cleaned)

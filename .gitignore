@@ -1,6 +1,7 @@
 # Data & models (too large for git)
 data/
 models/
+backup/
 *.npz
 
 # Python cache
@@ -15,3 +16,7 @@ __pycache__/
 .vscode/
 .idea/
 .env
+
+# Logs & Experiments
+training_log*.txt
+download.log
