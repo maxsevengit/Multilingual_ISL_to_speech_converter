@@ -9,9 +9,17 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data", "raw")
 INCLUDE_DIR = os.path.join(BASE_DIR, "data", "include_videos")
-MODEL_PATH = os.path.join(BASE_DIR, "models", "comparison", "comp_tcn.keras")
+# One trained run lives in this directory. Inference loads the bundle,
+# not a loose checkpoint path and a separately edited vocabulary.
+BUNDLE_DIR = os.path.join(BASE_DIR, "models", "isl_baseline_v1")
+MODEL_PATH = os.path.join(BUNDLE_DIR, "model.keras")
 VOCAB_PATH = os.path.join(BASE_DIR, "vocab", "words.json")
 DATASET_PATH = os.path.join(BASE_DIR, "data", "dataset.npz")
+PROCESSED_DIR = os.path.join(BASE_DIR, "data", "processed")
+AUGMENTED_DIR = os.path.join(BASE_DIR, "data", "augmented")
+MANIFEST_DIR = os.path.join(BASE_DIR, "data", "manifests")
+MANIFEST_PATH = os.path.join(MANIFEST_DIR, "samples.jsonl")
+SPLIT_PATH = os.path.join(MANIFEST_DIR, "split.json")
 
 # MediaPipe Tasks model assets (download once, then works offline)
 HAND_LANDMARKER_TASK_PATH = os.path.join(BASE_DIR, "models", "hand_landmarker.task")
@@ -32,24 +40,38 @@ MIN_TRACKING_CONFIDENCE = 0.5
 ENABLE_HAND_SEGMENTATION = True
 
 # ─── Landmark / Feature Configuration ─────────────────────────────────────────
-# For a laptop demo with a small vocabulary, hands-only features are typically
-# more stable than full-body Holistic pose (pose can add noise when partially
-# visible or misdetected). You can still switch back to pose+hands if needed.
-USE_POSE_LANDMARKS = True
+# Pose is off. The Hand Landmarker does not return body joints, and a
+# zero-filled pose block is not a pose feature. Turn this on only after a
+# real Pose Landmarker is wired through the same training and live path.
+USE_POSE_LANDMARKS = False
 
-# Normalize landmarks relative to wrist and hand bounding box.
+# Wrist-and-scale normalization. Applied only by normalize_hands_sequence,
+# which both training and live inference call.
 NORMALIZE_LANDMARKS = True
+
+# Append frame-to-frame velocity after normalization.
+USE_VELOCITY = True
 
 # ─── Landmark Dimensions ──────────────────────────────────────────────────────
 # Each hand: 21 landmarks × 3 (x,y,z) = 63
 # Both hands: 63 × 2 = 126
-# Pose (upper body selected): 12 landmarks × 3 = 36 (shoulders, elbows, wrists, hips)
+# Pose landmarks are not part of the feature vector. POSE_FEATURES is retained
+# only so older tests and notes can name the block that was removed.
 NUM_HAND_LANDMARKS = 21
 HAND_DIMS = 3  # x, y, z
 SINGLE_HAND_FEATURES = NUM_HAND_LANDMARKS * HAND_DIMS  # 63
 NUM_POSE_LANDMARKS = 12
 POSE_FEATURES = NUM_POSE_LANDMARKS * HAND_DIMS  # 36
-NUM_FEATURES = (SINGLE_HAND_FEATURES * 2) + (POSE_FEATURES if USE_POSE_LANDMARKS else 0)
+if USE_POSE_LANDMARKS:
+    raise RuntimeError(
+        "USE_POSE_LANDMARKS is True, but this pipeline does not extract pose. "
+        "Set USE_POSE_LANDMARKS = False, or add a real Pose Landmarker before "
+        "including pose in the feature vector."
+    )
+
+# Raw model input before velocity: left hand (63) + right hand (63).
+NUM_FEATURES = SINGLE_HAND_FEATURES * 2
+MODEL_FEATURE_WIDTH = NUM_FEATURES * (2 if USE_VELOCITY else 1)
 
 # Selected pose landmark indices (upper body only)
 POSE_LANDMARK_INDICES = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
@@ -58,12 +80,19 @@ POSE_LANDMARK_INDICES = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
 # 25=left_knee, 26=right_knee, 27=left_ankle, 28=right_ankle
 
 # ─── Temporal / Sequence ─────────────────────────────────────────────────────
-# NOTE: Must match the sequence length used in your dataset and trained model.
-SEQUENCE_LENGTH = 30       # Shorter = more training samples from same video
-STEP_SIZE = 10             # Sliding window step for continuous recognition
+# NOTE: Must match the sequence length stored in the model bundle.
+SEQUENCE_LENGTH = 30       # Frames per window
+STEP_SIZE = 10             # Sliding window step. Windows from one video stay in one split.
+SEED = 42
+TRAIN_RATIO = 0.70
+VAL_RATIO = 0.15
+TEST_RATIO = 0.15
 
 # ─── Model Architecture ──────────────────────────────────────────────────────
-# MODEL_TYPE: 'lstm' (recommended), 'mlp' (legacy), 'tcn' (1D-CNN)
+# Source of truth for a newly trained bundle. Inference reads model_type
+# from the bundle config.json, not from this constant.
+# 'tcn' is the baseline. 'lstm', 'gru', 'mlp', and 'transformer' already
+# exist for a later comparison and are not the default.
 MODEL_TYPE = 'tcn'
 
 MLP_UNITS_1 = 128          # First dense layer (MLP mode)

@@ -161,8 +161,8 @@ def hand_swap(sequence: np.ndarray) -> np.ndarray:
     """
     Swap left and right hand landmarks.
     Simulates left-handed vs right-handed signers.
-    
-    Assumes feature layout: [left_hand(63), right_hand(63), pose(36)]
+
+    Layout is left hand (63) then right hand (63). There is no pose block.
     """
     aug = sequence.copy()
     lh = config.SINGLE_HAND_FEATURES  # 63

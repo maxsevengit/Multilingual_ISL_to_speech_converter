@@ -8,6 +8,10 @@ backup/
 __pycache__/
 *.pyc
 *.pyo
+.venv312/
+
+# Local tool caches accidentally created during development
+.cache/
 
 # macOS
 .DS_Store

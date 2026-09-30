@@ -134,15 +134,37 @@ def _normalize_hand_vector(hand_vec: np.ndarray) -> np.ndarray:
     return points.flatten()
 
 
+def _as_landmark_sequence(sequence: np.ndarray) -> np.ndarray:
+    """Validate a raw hand-landmark sequence before normalization."""
+    sequence = np.asarray(sequence, dtype=np.float32)
+    if sequence.ndim != 2:
+        raise ValueError(
+            f"Expected a 2D landmark sequence (frames, features), got shape {sequence.shape}."
+        )
+    if sequence.shape[0] < 1:
+        raise ValueError("Landmark sequence has no frames.")
+    if sequence.shape[1] != config.NUM_FEATURES:
+        raise ValueError(
+            f"Expected {config.NUM_FEATURES} raw hand features "
+            f"(left 63 + right 63), got {sequence.shape[1]}. "
+            "Pose is not part of the feature vector."
+        )
+    return sequence
+
+
 def normalize_hands_sequence(sequence: np.ndarray) -> np.ndarray:
     """
-    Normalize each frame's hand landmarks using wrist + bounding box scale.
-    Works for hands-only or hands+pose feature layouts.
+    Authoritative landmark normalization for training, validation, test, and live inference.
+
+    Each hand is translated so the wrist is at the origin and scaled by the
+    hand's x/y bounding-box size. A missing hand (all zeros) stays zeros.
+    This function is the only place that normalization is applied.
     """
+    sequence = _as_landmark_sequence(sequence)
     if not config.NORMALIZE_LANDMARKS:
         return sequence
 
-    seq = sequence.copy().astype(np.float32)
+    seq = sequence.copy()
     lh = config.SINGLE_HAND_FEATURES
 
     for t in range(seq.shape[0]):
@@ -152,6 +174,25 @@ def normalize_hands_sequence(sequence: np.ndarray) -> np.ndarray:
         seq[t, lh:2 * lh] = _normalize_hand_vector(right)
 
     return seq
+
+
+def prepare_model_input(sequence: np.ndarray, use_velocity: bool = None) -> np.ndarray:
+    """
+    Shared train/live feature transform.
+
+    raw landmarks -> normalize_hands_sequence -> optional velocity
+    """
+    if use_velocity is None:
+        use_velocity = config.USE_VELOCITY
+    normalized = normalize_hands_sequence(sequence)
+    if use_velocity:
+        return build_feature_vector(normalized).astype(np.float32)
+    return normalized
+
+
+# Same object on purpose: training and live inference cannot drift.
+training_features = prepare_model_input
+live_features = prepare_model_input
 
 
 def sliding_windows(landmarks_list: list, seq_length: int = None, 

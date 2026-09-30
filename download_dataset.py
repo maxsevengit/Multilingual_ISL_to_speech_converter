@@ -15,17 +15,8 @@ Usage:
 import argparse
 import os
 import sys
-import ssl
 import zipfile
 import urllib.request
-
-# ─── SSL fix for macOS Python installations ───────────────────────────────────
-try:
-    _ssl_context = ssl.create_default_context()
-    urllib.request.urlopen("https://zenodo.org", context=_ssl_context, timeout=5)
-except Exception:
-    _ssl_context = ssl._create_unverified_context()
-    ssl._create_default_https_context = ssl._create_unverified_context
 
 # ─── INCLUDE Dataset on Zenodo ────────────────────────────────────────────────
 ZENODO_BASE = "https://zenodo.org/records/4010759/files"
@@ -185,6 +176,8 @@ Examples:
   python download_dataset.py --list              # List categories
         """
     )
+    parser.add_argument('--dataset', type=str, default='include',
+                        help="Dataset to download. Only 'include' is supported.")
     parser.add_argument('--list', action='store_true',
                         help='List available categories')
     parser.add_argument('--all', action='store_true',
@@ -199,6 +192,13 @@ Examples:
     if args.list:
         list_categories()
         return
+
+    if args.dataset != "include":
+        print("[ERROR] Only the INCLUDE dataset can be downloaded by this script.")
+        print("  Source: https://zenodo.org/records/4010759")
+        print("  License: CC-BY-4.0")
+        print("  iSign / ISLTranslate are continuous translation sets and are not downloaded.")
+        sys.exit(2)
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
     output_dir = args.output or os.path.join(base_dir, "data", "include_videos")

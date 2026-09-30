@@ -1,45 +1,30 @@
 {
     "words": [
-        "HELLO",
-        "HOW_ARE_YOU",
-        "ALRIGHT",
-        "GOOD_MORNING",
-        "GOOD_AFTERNOON",
-        "SUMMER",
-        "SPRING",
-        "WINTER",
         "FALL",
+        "MONSOON",
         "SEASON",
-        "MONSOON"
+        "SPRING",
+        "SUMMER",
+        "WINTER"
     ],
     "word_to_index": {
-        "HELLO": 0,
-        "HOW_ARE_YOU": 1,
-        "ALRIGHT": 2,
-        "GOOD_MORNING": 3,
-        "GOOD_AFTERNOON": 4,
-        "SUMMER": 5,
-        "SPRING": 6,
-        "WINTER": 7,
-        "FALL": 8,
-        "SEASON": 9,
-        "MONSOON": 10
+        "FALL": 0,
+        "MONSOON": 1,
+        "SEASON": 2,
+        "SPRING": 3,
+        "SUMMER": 4,
+        "WINTER": 5
     },
     "index_to_word": {
-        "0": "HELLO",
-        "1": "HOW_ARE_YOU",
-        "2": "ALRIGHT",
-        "3": "GOOD_MORNING",
-        "4": "GOOD_AFTERNOON",
-        "5": "SUMMER",
-        "6": "SPRING",
-        "7": "WINTER",
-        "8": "FALL",
-        "9": "SEASON",
-        "10": "MONSOON"
+        "0": "FALL",
+        "1": "MONSOON",
+        "2": "SEASON",
+        "3": "SPRING",
+        "4": "SUMMER",
+        "5": "WINTER"
     },
     "use_velocity": true,
     "sequence_length": 30,
-    "num_features": 324,
-    "model_type": "lstm"
+    "num_features": 252,
+    "model_type": "transformer"
 }

@@ -83,8 +83,10 @@ class TestHandLandmarks:
         assert result.shape == (config.SINGLE_HAND_FEATURES,)
         assert np.all(result == 0)
     
-    def test_none_pose_gives_zeros(self, extractor):
-        """None pose landmarks should produce zero array."""
-        result = extractor._extract_pose_landmarks(None)
-        assert result.shape == (config.POSE_FEATURES,)
-        assert np.all(result == 0)
+    def test_feature_vector_has_no_pose_block(self, extractor):
+        """The feature vector is both hands only. Pose is not filled with zeros."""
+        frame_rgb = np.zeros((config.FRAME_HEIGHT, config.FRAME_WIDTH, 3), dtype=np.uint8)
+        features = extractor.extract_landmarks(frame_rgb)
+        assert features.shape == (config.SINGLE_HAND_FEATURES * 2,)
+        assert config.USE_POSE_LANDMARKS is False
+        assert features.shape[0] == config.NUM_FEATURES

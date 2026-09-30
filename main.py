@@ -25,10 +25,9 @@ from src.preprocessing import normalize_frame, convert_color
 from src.landmark_extractor import LandmarkExtractor
 from src.recognizer import GestureRecognizer
 from src.dataset import collect_training_data
-from src.model import load_model
-from src.utils import load_vocabulary, FPSCounter, draw_info_panel
+from src.model_bundle import BundleMismatchError, load_model_bundle
 from src.translator import ISLTranslator
-from src.hand_segmentation import hand_mask_from_mediapipe_hands, apply_mask
+from src.utils import FPSCounter, draw_info_panel
 
 
 def _open_video_source(video_path: str = None):
@@ -81,25 +80,23 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
         video_path: Path to video file, or None for webcam.
     """
     # ── Load model and vocabulary ────────────────────────────────────────────
-    print("[INFO] Loading model...")
-    model = load_model()
-    if model is None:
-        print("\n[ERROR] No trained model found!")
-        print("  Please train a model first:")
-        print("  1. Download data:  python download_dataset.py")
-        print("  2. Process data:   python process_videos.py --input data/include_videos")
-        print("  3. Train model:    python train.py --augment")
+    print("[INFO] Loading model bundle...")
+    try:
+        bundle = load_model_bundle()
+    except BundleMismatchError as exc:
+        print(f"\n[ERROR] {exc}")
         return
-    
-    print("[INFO] Loading vocabulary...")
-    vocab = load_vocabulary()
-    label_names = vocab['words']
-    
-    if 'use_velocity' in vocab:
-        use_velocity = vocab['use_velocity']
-    if 'sequence_length' in vocab:
-        config.SEQUENCE_LENGTH = int(vocab['sequence_length'])
-    
+    except Exception as exc:
+        print(f"\n[ERROR] Could not load model bundle: {exc}")
+        print("  Train first: python train.py --dataset include")
+        return
+
+    model = bundle.model
+    vocab = bundle.vocabulary
+    label_names = vocab["words"]
+    use_velocity = bool(bundle.config["use_velocity"])
+    print(f"[INFO] Bundle: {bundle.directory}")
+    print(f"[INFO] Architecture: {bundle.config['model_type']}")
     print(f"[INFO] Vocabulary: {label_names}")
     print(f"[INFO] Velocity features: {'ON' if use_velocity else 'OFF'}")
     
@@ -113,7 +110,9 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
     
     # ── Initialize components (SAME for both modes) ──────────────────────────
     extractor = LandmarkExtractor()
-    recognizer = GestureRecognizer(model, label_names, use_velocity)
+    recognizer = GestureRecognizer(
+        model, label_names, use_velocity_features=use_velocity
+    )
     translator = ISLTranslator()
     fps_counter = FPSCounter()
     paused = False

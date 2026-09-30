@@ -24,10 +24,12 @@ import numpy as np
 from collections import defaultdict
 
 import config
+from src.dataset import normalize_label_name
 from src.preprocessing import normalize_frame, convert_color
 from src.landmark_extractor import LandmarkExtractor
-from src.feature_engineer import create_sequence, sliding_windows
-from src.utils import save_vocabulary
+from src.manifest import save_window, window_records_from_frames, write_manifest
+from src.splits import assert_no_leakage, assign_splits
+from src.manifest import write_split
 
 
 def scan_include_dataset(input_dir: str) -> dict:
@@ -60,13 +62,19 @@ def scan_include_dataset(input_dir: str) -> dict:
             if not os.path.isdir(word_path):
                 continue
             
-            # Clean word name (remove underscores, capitalize)
-            word_name = word_dir.strip().upper().replace(" ", "_")
+            # INCLUDE folders look like "61. Summer" or "Ex. Monsoon".
+            word_name = normalize_label_name(word_dir)
+            if not word_name:
+                continue
             
-            # Find all video files
-            for ext in ['*.mp4', '*.avi', '*.mov', '*.MP4', '*.AVI', '*.MOV']:
-                videos = glob.glob(os.path.join(word_path, ext))
-                word_videos[word_name].extend(videos)
+            seen = set()
+            for ext in ['*.mp4', '*.avi', '*.mov', '*.mkv', '*.MP4', '*.AVI', '*.MOV', '*.MKV']:
+                for video in glob.glob(os.path.join(word_path, ext)):
+                    key = os.path.normcase(os.path.abspath(video))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    word_videos[word_name].append(video)
     
     return dict(word_videos)
 
@@ -96,9 +104,14 @@ def scan_generic_dataset(input_dir: str) -> dict:
         
         word_name = word_dir.strip().upper().replace(" ", "_")
         
-        for ext in ['*.mp4', '*.avi', '*.mov', '*.MP4', '*.AVI', '*.MOV']:
-            videos = glob.glob(os.path.join(word_path, ext))
-            word_videos[word_name].extend(videos)
+        seen = set()
+        for ext in ['*.mp4', '*.avi', '*.mov', '*.mkv', '*.MP4', '*.AVI', '*.MOV', '*.MKV']:
+            for video in glob.glob(os.path.join(word_path, ext)):
+                key = os.path.normcase(os.path.abspath(video))
+                if key in seen:
+                    continue
+                seen.add(key)
+                word_videos[word_name].append(video)
     
     return dict(word_videos)
 
@@ -141,114 +154,88 @@ def process_video(video_path: str, extractor: LandmarkExtractor) -> list:
 
 
 def create_samples_from_video(landmarks_list: list, 
-                               min_frames: int = 10) -> list:
+                               min_frames: int = 10,
+                               video_id: str = "video",
+                               label: str = "UNKNOWN") -> list:
     """
-    Convert a video's landmark list into training samples.
-    
-    For short videos (< SEQUENCE_LENGTH): pad to create one sample.
-    For long videos: use sliding windows to create multiple samples.
-    
-    Args:
-        landmarks_list: List of landmark arrays from one video.
-        min_frames: Minimum frames required for a valid sample.
-    
-    Returns:
-        List of numpy arrays, each of shape (SEQUENCE_LENGTH, NUM_FEATURES).
+    Convert one video into raw windows that keep the source video id.
+
+    Returns a list of (metadata, array) pairs.
     """
-    if len(landmarks_list) < min_frames:
-        return []
-    
-    if len(landmarks_list) <= config.SEQUENCE_LENGTH:
-        # Single padded sample
-        seq = create_sequence(landmarks_list)
-        return [seq]
-    else:
-        # Multiple samples via sliding windows
-        return sliding_windows(
-            landmarks_list, 
-            seq_length=config.SEQUENCE_LENGTH,
-            step_size=config.STEP_SIZE
-        )
+    return window_records_from_frames(
+        landmarks_list,
+        video_id=video_id,
+        label=label,
+        min_frames=min_frames,
+    )
 
 
-def process_dataset(word_videos: dict, output_dir: str, 
-                    max_words: int = None, max_videos_per_word: int = None):
+def process_dataset(word_videos: dict, output_dir: str = None, 
+                    max_words: int = None, max_videos_per_word: int = None,
+                    base_dir: str = None):
     """
-    Process all videos and save landmark sequences as .npy files.
-    
-    Args:
-        word_videos: Dict mapping word names to video file paths.
-        output_dir: Directory to save .npy sequences (data/raw/).
-        max_words: Maximum number of words to process (None = all).
-        max_videos_per_word: Maximum videos per word (None = all).
+    Process videos into raw landmark windows and a manifest.
+
+    Augmented samples are not written. Split labels are assigned by video id
+    after every window has been saved.
     """
+    if base_dir is None:
+        base_dir = config.BASE_DIR
     extractor = LandmarkExtractor()
     
     words = sorted(word_videos.keys())
     if max_words:
         words = words[:max_words]
     
-    total_samples = 0
+    records = []
     processed_words = []
     
-    print(f"\n  Processing {len(words)} words into landmark sequences...")
-    print(f"  Output: {output_dir}\n")
+    print(f"\n  Processing {len(words)} words into raw landmark windows...")
+    print(f"  Manifest: {config.MANIFEST_PATH}\n")
     
     for word_idx, word in enumerate(words):
         videos = word_videos[word]
         if max_videos_per_word:
             videos = videos[:max_videos_per_word]
         
-        word_dir = os.path.join(output_dir, word)
-        os.makedirs(word_dir, exist_ok=True)
-        
-        # Count existing samples
-        existing = len([f for f in os.listdir(word_dir) if f.endswith('.npy')])
-        if existing >= len(videos):
-            print(f"  [{word_idx+1}/{len(words)}] {word}: {existing} samples already exist, skipping.")
-            total_samples += existing
-            processed_words.append(word)
-            continue
-        
-        sample_count = existing
         print(f"  [{word_idx+1}/{len(words)}] {word}: processing {len(videos)} videos...")
+        word_windows = 0
         
         for vid_idx, video_path in enumerate(videos):
-            # Extract landmarks from video
+            video_id = os.path.relpath(video_path, base_dir).replace("\\", "/")
             landmarks_list = process_video(video_path, extractor)
-            
             if not landmarks_list:
                 continue
             
-            # Create training samples
-            samples = create_samples_from_video(landmarks_list)
+            samples = create_samples_from_video(
+                landmarks_list, video_id=video_id, label=word
+            )
+            for record, array in samples:
+                save_window(base_dir, record, array)
+                records.append(record)
+                word_windows += 1
             
-            # Save each sample
-            for sample in samples:
-                save_path = os.path.join(word_dir, f"sample_{sample_count:04d}.npy")
-                np.save(save_path, sample.astype(np.float32))
-                sample_count += 1
-            
-            # Progress indicator
             if (vid_idx + 1) % 10 == 0:
-                print(f"    Processed {vid_idx+1}/{len(videos)} videos ({sample_count} samples)")
+                print(f"    Processed {vid_idx+1}/{len(videos)} videos ({word_windows} windows)")
         
-        print(f"    → {sample_count} samples saved for '{word}'")
-        total_samples += sample_count
-        processed_words.append(word)
+        print(f"    -> {word_windows} windows saved for '{word}'")
+        if word_windows:
+            processed_words.append(word)
     
     extractor.release()
+
+    records, summary = assign_splits(records, seed=config.SEED)
+    assert_no_leakage(records)
+    write_manifest(records, config.MANIFEST_PATH)
+    write_split(summary, config.SPLIT_PATH)
     
-    # ── Update vocabulary ────────────────────────────────────────────────────
-    print(f"\n  Updating vocabulary with {len(processed_words)} words...")
-    vocab = {
-        "words": processed_words,
-        "word_to_index": {w: i for i, w in enumerate(processed_words)},
-        "index_to_word": {str(i): w for i, w in enumerate(processed_words)},
-    }
-    save_vocabulary(vocab)
+    print(f"\n  Split strategy: {summary['strategy']}")
+    print(f"  Videos: {summary['counts']['videos']}")
+    print(f"  Windows: {summary['counts']['windows']}")
+    if summary.get("limitation"):
+        print(f"  Note: {summary['limitation']}")
     
-    return total_samples, processed_words
+    return len(records), processed_words
 
 
 def main():
@@ -273,7 +260,7 @@ Examples:
     parser.add_argument('--input', type=str, required=True,
                         help='Input directory containing video files')
     parser.add_argument('--output', type=str, default=None,
-                        help='Output directory for .npy files (default: data/raw)')
+                        help='Unused. Windows are written under data/processed with a manifest.')
     parser.add_argument('--format', type=str, choices=['include', 'generic'],
                         default='include',
                         help='Dataset directory format (default: include)')
@@ -295,7 +282,7 @@ Examples:
     os.makedirs(output_dir, exist_ok=True)
     
     print("=" * 60)
-    print("  ISL Video → Landmark Processor")
+    print("  ISL Video to Landmark Processor")
     print("=" * 60)
     
     # ── Scan dataset ─────────────────────────────────────────────────────────
@@ -332,9 +319,9 @@ Examples:
     print(f"\n{'='*60}")
     print(f"  Processing Complete!")
     print(f"  Total: {total_samples} samples across {len(words)} words")
-    print(f"  Output: {output_dir}")
+    print(f"  Output: data/processed and data/manifests/samples.jsonl")
     print(f"\n  Next step: Train the model:")
-    print(f"  python train.py --augment")
+    print(f"  python train.py --dataset include")
     print(f"{'='*60}")
 
 

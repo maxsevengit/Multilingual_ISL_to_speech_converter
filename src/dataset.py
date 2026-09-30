@@ -90,6 +90,26 @@ def filter_labels(X: np.ndarray, y: np.ndarray, label_names: list, allowed: list
     return X_filtered, y_new, new_label_names
 
 
+def _append_collection_record(word: str, sample_id: str, save_path: str) -> None:
+    """Record a webcam sample as its own video so it can be split without leakage."""
+    from src.manifest import read_manifest, write_manifest
+
+    relative = os.path.relpath(save_path, config.BASE_DIR).replace("\\", "/")
+    records = [row for row in read_manifest() if row.get("sample_id") != sample_id]
+    records.append({
+        "sample_id": sample_id,
+        "video_id": f"webcam/{word}/{sample_id}",
+        "label": word,
+        "signer_id": None,
+        "start_frame": 0,
+        "end_frame": config.SEQUENCE_LENGTH - 1,
+        "padded": False,
+        "split": None,
+        "path": relative,
+    })
+    write_manifest(records)
+
+
 def collect_training_data(word: str, num_samples: int = None):
     """
     Interactive data collection mode: record gesture sequences via webcam.
@@ -115,7 +135,7 @@ def collect_training_data(word: str, num_samples: int = None):
     add_word_to_vocabulary(word)
     
     # Setup save directory
-    word_dir = os.path.join(config.DATA_DIR, word)
+    word_dir = os.path.join(config.PROCESSED_DIR, word)
     os.makedirs(word_dir, exist_ok=True)
     
     # Count existing samples
@@ -197,8 +217,10 @@ def collect_training_data(word: str, num_samples: int = None):
                 if len(frame_buffer) >= config.SEQUENCE_LENGTH:
                     # Save the sample
                     sequence = np.array(frame_buffer[:config.SEQUENCE_LENGTH], dtype=np.float32)
-                    save_path = os.path.join(word_dir, f"sample_{sample_count:04d}.npy")
+                    sample_id = f"{word}__sample_{sample_count:04d}"
+                    save_path = os.path.join(word_dir, f"{sample_id}.npy")
                     np.save(save_path, sequence)
+                    _append_collection_record(word, sample_id, save_path)
                     
                     sample_count += 1
                     recording = False

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Hand Landmark Extraction Module.
 
 Uses MediaPipe HandLandmarker (Tasks API) to detect hands.
@@ -18,8 +18,11 @@ from mediapipe.tasks.python.vision import HandLandmarker, HandLandmarkerOptions
 
 class LandmarkExtractor:
     """
-    Extract hand, pose, and face landmarks using MediaPipe HolisticLandmarker.
-    Detects all body parts for comprehensive gesture recognition including back-of-hand signs.
+    Extract raw left/right hand landmarks with MediaPipe HandLandmarker.
+
+    Pose and face are not estimated. The returned vector is 126 floats
+    (two hands Ã— 21 landmarks Ã— xyz) and is not normalized. Call
+    prepare_model_input before the classifier.
     """
     
     def __init__(self):
@@ -41,7 +44,7 @@ class LandmarkExtractor:
                                         min_hand_presence_confidence=0.3,
                                         min_tracking_confidence=0.3)
             self.landmarker = HandLandmarker.create_from_options(opts)
-            print(f"[INFO] HandLandmarker initialized with lowered confidence ✓")
+            print(f"[INFO] HandLandmarker initialized with lowered confidence âœ“")
         except Exception as e:
             print(f"[ERROR] Failed to initialize landmarker: {e}")
             self.landmarker = None
@@ -54,14 +57,15 @@ class LandmarkExtractor:
     def extract_landmarks_with_results(self, frame_rgb: np.ndarray, mirrored: bool = False):
         """
         Detect hand landmarks using MediaPipe HandLandmarker.
-        Add synthetic pose/face landmarks for visualization when hands aren't visible.
+        Returns raw coordinates. Normalization happens later in one shared function.
         
         Args:
             frame_rgb: Frame in RGB format (H, W, 3)
             mirrored: Whether the frame is horizontally flipped (webcam mode)
             
         Returns:
-            (features_vector, results_object) where features_vector is shape (162,)
+            (features_vector, results_object) where features_vector is raw
+            hand landmarks of shape (126,).
         """
         self.frame_count += 1
         h, w = frame_rgb.shape[:2]
@@ -124,75 +128,16 @@ class LandmarkExtractor:
             results.left_hand_landmarks = []
             results.right_hand_landmarks = []
         
-        # Add synthetic pose and face landmarks for visualization
-        # These are used for UI visualization when hands aren't visible
-        results.pose_landmarks = self._generate_synthetic_pose()
-        results.face_landmarks = self._generate_synthetic_face()
-        
-        # Extract features from detected hands
+        if config.USE_POSE_LANDMARKS:
+            raise RuntimeError(
+                "USE_POSE_LANDMARKS is True, but LandmarkExtractor does not "
+                "estimate pose. Refusing to emit a zero-filled pose block."
+            )
+
         lh = self._extract_hand_landmarks(results.left_hand_landmarks)
         rh = self._extract_hand_landmarks(results.right_hand_landmarks)
-
-        if config.USE_POSE_LANDMARKS:
-            pose_feat = np.zeros(36, dtype=np.float32)  # Placeholder for pose
-            features = np.concatenate([lh, rh, pose_feat]).astype(np.float32)
-        else:
-            features = np.concatenate([lh, rh]).astype(np.float32)
-        
+        features = np.concatenate([lh, rh]).astype(np.float32)
         return features, results
-
-    def _generate_synthetic_pose(self):
-        """Generate simple pose landmarks for visualization."""
-        # Create a simple standing pose skeleton
-        class Landmark:
-            def __init__(self, x, y, z):
-                self.x = x
-                self.y = y
-                self.z = z
-        
-        # 33 pose landmarks: head (0-11), torso/arms (11-22), legs (23-32)
-        pose = []
-        # Nose and eyes
-        pose.append(Landmark(0.5, 0.3, 0.0))   # Nose (0)
-        pose.append(Landmark(0.45, 0.25, 0.0))  # Left eye (1)
-        pose.append(Landmark(0.55, 0.25, 0.0))  # Right eye (2)
-        
-        # Pad with default values for remaining indices
-        for i in range(3, 33):
-            pose.append(Landmark(0.5, 0.5, 0.0))
-        
-        return pose
-
-    def _generate_synthetic_face(self):
-        """Generate synthetic face landmarks for visualization."""
-        class Landmark:
-            def __init__(self, x, y, z):
-                self.x = x
-                self.y = y
-                self.z = z
-        
-        # Generate 468 face landmarks (MediaPipe face mesh)
-        face = []
-        # Key face regions
-        # Eyes
-        for i in range(6):
-            face.append(Landmark(0.35 + i*0.03, 0.25, 0.0))  # Left eye area
-            face.append(Landmark(0.65 - i*0.03, 0.25, 0.0))  # Right eye area
-        
-        # Nose
-        for i in range(9):
-            face.append(Landmark(0.5, 0.3 + i*0.02, 0.0))  # Nose bridge to tip
-        
-        # Mouth
-        for i in range(20):
-            angle = i * (3.14159 / 10)
-            face.append(Landmark(0.5 + 0.1*np.cos(angle), 0.5 + 0.05*np.sin(angle), 0.0))
-        
-        # Pad to 468 landmarks
-        while len(face) < 468:
-            face.append(Landmark(0.5, 0.5, 0.0))
-        
-        return face[:468]
 
     def _extract_hand_landmarks(self, landmarks) -> np.ndarray:
         """Extract hand landmarks as a flat array of shape (63,)."""
@@ -212,49 +157,21 @@ class LandmarkExtractor:
                 return np.zeros(63, dtype=np.float32)
 
             points = np.array(points, dtype=np.float32)
-
-            if config.NORMALIZE_LANDMARKS:
-                points = self._normalize_hand_points(points)
-
+            if points.shape[0] < config.NUM_HAND_LANDMARKS:
+                padded = np.zeros((config.NUM_HAND_LANDMARKS, 3), dtype=np.float32)
+                padded[:points.shape[0]] = points
+                points = padded
+            elif points.shape[0] > config.NUM_HAND_LANDMARKS:
+                points = points[:config.NUM_HAND_LANDMARKS]
             return points.flatten()
         except Exception as e:
             print(f"[DEBUG] Hand landmark extraction error: {e}")
             return np.zeros(63, dtype=np.float32)
 
-    def _normalize_hand_points(self, points: np.ndarray) -> np.ndarray:
-        """Normalize hand landmarks relative to wrist and bounding box."""
-        if points.size == 0:
-            return points
-
-        if np.all(points == 0):
-            return points
-
-        wrist = points[0].copy()
-        points = points - wrist
-
-        xy = points[:, :2]
-        min_xy = np.min(xy, axis=0)
-        max_xy = np.max(xy, axis=0)
-        scale = float(max(max_xy[0] - min_xy[0], max_xy[1] - min_xy[1], 1e-6))
-
-        points[:, :2] = points[:, :2] / scale
-        points[:, 2] = points[:, 2] / scale
-
-        return points
-
-    def _extract_pose_landmarks(self, landmarks) -> np.ndarray:
-        """Placeholder for pose landmarks (not used with HandLandmarker)."""
-        return np.zeros(36, dtype=np.float32)
-
-    def _normalize_to_body(self, lh, rh, pose, pose_landmarks=None):
-        """Normalize hand landmarks to frame center."""
-        # For hand landmarks, simple normalization by dividing by 2
-        # (since MediaPipe normalizes to 0-1 range)
-        return lh, rh, pose
 
     def draw_landmarks(self, frame_bgr: np.ndarray, results: object) -> np.ndarray:
         """
-        Draw detected landmarks (hands, pose, face) on frame with vibrant colors.
+        Draw detected hand landmarks. Pose and face are not drawn.
         
         Args:
             frame_bgr: Frame in BGR format
@@ -268,15 +185,7 @@ class LandmarkExtractor:
         
         annotated = frame_bgr.copy()
         h, w = frame_bgr.shape[:2]
-        
-        # Draw face landmarks (eyes, nose, mouth) in cyan
-        if hasattr(results, 'face_landmarks') and results.face_landmarks:
-            self._draw_face_landmarks(annotated, results.face_landmarks, h, w)
-        
-        # Draw pose landmarks (body skeleton) in red
-        if hasattr(results, 'pose_landmarks') and results.pose_landmarks:
-            self._draw_pose_connections(annotated, results.pose_landmarks, h, w)
-        
+
         # Draw left hand in GREEN
         if hasattr(results, 'left_hand_landmarks') and results.left_hand_landmarks:
             self._draw_hand_connections(annotated, results.left_hand_landmarks, h, w, color=(0, 255, 0))
@@ -375,93 +284,6 @@ class LandmarkExtractor:
                 # Add white outline for contrast
                 cv2.circle(frame, point, 6, (255, 255, 255), 1)
 
-    def _draw_face_landmarks(self, frame: np.ndarray, landmarks, h: int, w: int):
-        """
-        Draw face landmarks (eyes, nose, mouth) on frame.
-        
-        Args:
-            frame: Frame to draw on
-            landmarks: List of face landmark objects
-            h, w: Frame dimensions
-        """
-        if not landmarks or len(landmarks) == 0:
-            return
-        
-        # Key face regions for visualization
-        # Eyes: 33, 133 (left), 362, 263 (right)
-        # Nose: 1 (tip), 4, 5 (bridge), 94, 322 (wings)
-        # Mouth: 78, 13, 312 (key points)
-        
-        key_indices = {
-            'eyes': [33, 133, 362, 263],  # Eye centers
-            'nose': [1, 4, 5, 94, 322],   # Nose points
-            'mouth': [78, 13, 312]        # Mouth corners
-        }
-        
-        # Convert landmarks to pixel coordinates and draw
-        for idx in range(min(len(landmarks), 468)):  # Mediapipe face has 468 landmarks
-            try:
-                lm = landmarks[idx]
-                x = int(lm.x * w)
-                y = int(lm.y * h)
-                
-                # Determine color based on region
-                if idx in key_indices['eyes']:
-                    color = (0, 255, 255)  # Cyan for eyes
-                elif idx in key_indices['nose']:
-                    color = (0, 165, 255)  # Orange for nose
-                elif idx in key_indices['mouth']:
-                    color = (255, 0, 255)  # Magenta for mouth
-                else:
-                    color = (100, 100, 255)  # Light red for other face points
-                
-                cv2.circle(frame, (x, y), 2, color, -1)
-            except (AttributeError, TypeError):
-                pass
-
-    def _draw_pose_connections(self, frame: np.ndarray, landmarks, h: int, w: int):
-        """
-        Draw pose skeleton (body joints and connections).
-        
-        Args:
-            frame: Frame to draw on
-            landmarks: List of pose landmark objects (33 points)
-            h, w: Frame dimensions
-        """
-        if not landmarks or len(landmarks) == 0:
-            return
-        
-        # Upper body pose connections (arms, shoulders, neck)
-        POSE_CONNECTIONS = [
-            (11, 13), (13, 15),  # Left arm
-            (12, 14), (14, 16),  # Right arm
-            (11, 12),            # Shoulders
-            (0, 1),              # Nose-eyes
-        ]
-        
-        # Convert to pixel coordinates
-        points = []
-        for lm in landmarks:
-            try:
-                x = int(lm.x * w)
-                y = int(lm.y * h)
-                points.append((x, y))
-            except (AttributeError, TypeError):
-                points.append((0, 0))
-        
-        # Draw connections in red
-        for start_idx, end_idx in POSE_CONNECTIONS:
-            if start_idx < len(points) and end_idx < len(points):
-                pt1 = points[start_idx]
-                pt2 = points[end_idx]
-                if pt1 != (0, 0) and pt2 != (0, 0):
-                    cv2.line(frame, pt1, pt2, (0, 0, 255), 2)  # Red lines
-        
-        # Draw key joint points
-        key_indices = [0, 1, 11, 12, 13, 14, 15, 16]  # Nose, eyes, shoulders, elbows, wrists
-        for idx in key_indices:
-            if idx < len(points) and points[idx] != (0, 0):
-                cv2.circle(frame, points[idx], 4, (0, 0, 255), -1)  # Red circles
 
     def has_hands(self, results: object) -> bool:
         """Check if hands were detected in the results."""

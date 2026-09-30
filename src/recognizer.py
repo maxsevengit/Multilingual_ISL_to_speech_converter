@@ -6,11 +6,12 @@ overlapping temporal windows, and applies smoothing + confidence
 gating to produce a clean word stream.
 """
 
+from __future__ import annotations
+
 import collections
 import numpy as np
-from tensorflow import keras
 import config
-from src.feature_engineer import create_sequence, build_feature_vector
+from src.feature_engineer import create_sequence, live_features
 
 
 class GestureRecognizer:
@@ -25,7 +26,7 @@ class GestureRecognizer:
         - Accumulated sentence output
     """
     
-    def __init__(self, model: keras.Model, label_names: list, 
+    def __init__(self, model, label_names: list, 
                  use_velocity_features: bool = False):
         """
         Initialize the recognizer.
@@ -77,16 +78,25 @@ class GestureRecognizer:
             len(self.frame_buffer) < config.SEQUENCE_LENGTH):
             return None, 0.0
         
-        # Build sequence from buffer
-        sequence = create_sequence(list(self.frame_buffer))
-        
-        # Optionally add velocity features
-        if self.use_velocity_features:
-            sequence = build_feature_vector(sequence)
+        # Same transform as training: normalize, then optional velocity.
+        sequence = live_features(
+            create_sequence(list(self.frame_buffer)),
+            use_velocity=self.use_velocity_features,
+        )
+        expected_width = None
+        input_shape = getattr(self.model, "input_shape", None)
+        if input_shape is not None and len(input_shape) >= 2:
+            expected_width = input_shape[-1]
+        if expected_width is not None and sequence.shape[-1] != expected_width:
+            raise ValueError(
+                f"Checkpoint expects {expected_width} features. "
+                f"Current pipeline produces {sequence.shape[-1]} features. "
+                "Model loading aborted due to incompatible feature specification."
+            )
         
         # Run model inference
-        input_data = np.expand_dims(sequence, axis=0)  # Add batch dimension
-        if len(self.model.input_shape) == 2:
+        input_data = np.expand_dims(sequence, axis=0)
+        if input_shape is not None and len(input_shape) == 2:
             input_data = input_data.reshape((input_data.shape[0], -1))
         predictions = self.model.predict(input_data, verbose=0)[0]
         
