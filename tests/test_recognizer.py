@@ -142,6 +142,15 @@ class TestGestureRecognizer:
         sentence = recognizer.get_sentence()
         assert len(sentence) >= 1
 
+    def test_predict_returns_gloss_confidence_and_probabilities(self, recognizer):
+        """predict() is the shared inference call for the UI and a later API."""
+        sequence = np.random.rand(config.SEQUENCE_LENGTH, config.NUM_FEATURES).astype(np.float32)
+        result = recognizer.predict(sequence)
+        assert result.gloss == "HELLO"
+        assert result.confidence == pytest.approx(0.9)
+        assert result.probabilities.shape == (3,)
+        assert result.probabilities.sum() == pytest.approx(1.0)
+
 
 class TestSmoothPredictions:
     """Tests for the prediction smoothing mechanism."""

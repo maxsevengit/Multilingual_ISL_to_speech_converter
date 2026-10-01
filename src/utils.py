@@ -100,7 +100,8 @@ def draw_info_panel(frame: np.ndarray, prediction: str = None,
                     confidence: float = 0.0, sentence: list = None,
                     fps: float = 0.0, mode: str = "RECOGNIZE",
                     collecting_word: str = None, sample_count: int = 0,
-                    translation: str = None, target_language: str = "English") -> np.ndarray:
+                    translation: str = None, target_language: str = "English",
+                    model_name: str = None, camera_status: str = None) -> np.ndarray:
     """
     Draw an information overlay panel on the frame.
     All positions scale relative to frame size so it works with
@@ -116,11 +117,16 @@ def draw_info_panel(frame: np.ndarray, prediction: str = None,
     # ── Top bar: Mode + FPS ──────────────────────────────────────────────────
     top_h = int(45 * s)
     cv2.rectangle(output, (0, 0), (w, top_h), (40, 40, 40), -1)
-    cv2.putText(output, f"ISL | {mode}", (pad, int(28 * s)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6 * s, (0, 255, 200), max(1, int(2 * s)))
-    fps_text = f"FPS: {fps:.0f}"
-    cv2.putText(output, fps_text, (w - int(110 * s), int(28 * s)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5 * s, (200, 200, 200), max(1, int(s)))
+    title = f"ISL | {mode}"
+    if model_name:
+        title = f"{title} | {model_name}"
+    cv2.putText(output, title, (pad, int(28 * s)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55 * s, (0, 255, 200), max(1, int(2 * s)))
+    status = camera_status or ""
+    fps_text = f"{status}  FPS: {fps:.0f}".strip()
+    fps_size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45 * s, max(1, int(s)))[0]
+    cv2.putText(output, fps_text, (w - fps_size[0] - pad, int(28 * s)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45 * s, (200, 200, 200), max(1, int(s)))
     
     if mode in ("RECOGNIZE", "WEBCAM", "VIDEO"):
         # ── Prediction box ───────────────────────────────────────────────────
@@ -133,18 +139,24 @@ def draw_info_panel(frame: np.ndarray, prediction: str = None,
             overlay = output.copy()
             cv2.rectangle(overlay, (pad, box_y1), (box_x2, box_y2), (20, 20, 20), -1)
             cv2.addWeighted(overlay, 0.7, output, 0.3, 0, output)
-            cv2.rectangle(output, (pad, box_y1), (box_x2, box_y2), (0, 255, 200), 2)
+            low_confidence = confidence < config.CONFIDENCE_THRESHOLD
+            border = (0, 140, 255) if low_confidence else (0, 255, 200)
+            word_color = (0, 140, 255) if low_confidence else (0, 255, 200)
+            cv2.rectangle(output, (pad, box_y1), (box_x2, box_y2), border, 2)
             
             # Word — large and bold
-            word_font_scale = min(1.2 * s, (box_x2 - pad - 10) / (len(prediction) * 22 + 1))
+            shown = prediction if not low_confidence else f"{prediction} ?"
+            word_font_scale = min(1.2 * s, (box_x2 - pad - 10) / (len(shown) * 22 + 1))
             word_font_scale = max(word_font_scale, 0.5)
-            cv2.putText(output, prediction, (pad + int(8 * s), box_y2 - int(25 * s)),
-                        cv2.FONT_HERSHEY_SIMPLEX, word_font_scale, (0, 255, 200),
+            cv2.putText(output, shown, (pad + int(8 * s), box_y2 - int(25 * s)),
+                        cv2.FONT_HERSHEY_SIMPLEX, word_font_scale, word_color,
                         max(2, int(2.5 * s)))
             
-            # Confidence percentage
-            conf_text = f"{confidence:.0%}"
-            conf_color = (0, 255, 0) if confidence > 0.8 else (0, 200, 255)
+            # Confidence percentage. Below the gate the color and label change.
+            conf_text = f"LOW {confidence:.0%}" if low_confidence else f"{confidence:.0%}"
+            conf_color = (0, 140, 255) if low_confidence else (
+                (0, 255, 0) if confidence > 0.8 else (0, 200, 255)
+            )
             cv2.putText(output, conf_text, (pad + int(8 * s), box_y1 + int(20 * s)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55 * s, conf_color,
                         max(1, int(1.5 * s)))

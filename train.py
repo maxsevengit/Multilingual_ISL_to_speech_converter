@@ -33,10 +33,13 @@ import config
 from src.augment_landmarks import augment_sequence
 from src.dataset import normalize_label_name
 from src.feature_engineer import build_feature_vector, normalize_hands_sequence, training_features
+from src.logutil import get_logger
 from src.manifest import load_split_arrays, read_manifest, write_manifest, write_split
 from src.model_bundle import pipeline_spec, save_model_bundle
 from src.splits import assert_no_leakage, assign_splits
 from src.utils import save_vocabulary
+
+log = get_logger("train")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -65,7 +68,7 @@ def augment_sequences(X: np.ndarray, y: np.ndarray,
     X_aug_list = [X]
     y_aug_list = [y]
 
-    print(f"  Generating {augment_factor}x augmented copies (intensity={intensity:.1f})...")
+    log.info(f"  Generating {augment_factor}x augmented copies (intensity={intensity:.1f})...")
     for pass_num in range(augment_factor):
         batch = np.array(
             [augment_sequence(seq, intensity=intensity) for seq in X],
@@ -74,7 +77,7 @@ def augment_sequences(X: np.ndarray, y: np.ndarray,
         X_aug_list.append(batch)
         y_aug_list.append(y)
         if (pass_num + 1) % 5 == 0:
-            print(f"    Pass {pass_num + 1}/{augment_factor} done")
+            log.info(f"    Pass {pass_num + 1}/{augment_factor} done")
 
     return np.concatenate(X_aug_list), np.concatenate(y_aug_list)
 
@@ -154,34 +157,34 @@ def main():
     import tensorflow as tf
     tf.keras.utils.set_random_seed(config.SEED)
 
-    print("=" * 60)
-    print("  ISL Gesture Recognition - Model Training")
-    print(f"  Dataset      : {args.dataset}")
-    print(f"  Architecture : {args.model_type.upper()}")
-    print(f"  Bundle       : {config.BUNDLE_DIR}")
-    print(f"  Seed         : {config.SEED}")
-    print(f"  Velocity     : {'ON' if not args.no_velocity else 'OFF'}")
-    print(f"  Augment      : {'OFF' if args.no_augment else f'{args.augment_factor}x on train only'}")
-    print("=" * 60)
+    log.info("=" * 60)
+    log.info("  ISL Gesture Recognition - Model Training")
+    log.info(f"  Dataset      : {args.dataset}")
+    log.info(f"  Architecture : {args.model_type.upper()}")
+    log.info(f"  Bundle       : {config.BUNDLE_DIR}")
+    log.info(f"  Seed         : {config.SEED}")
+    log.info(f"  Velocity     : {'ON' if not args.no_velocity else 'OFF'}")
+    log.info(f"  Augment      : {'OFF' if args.no_augment else f'{args.augment_factor}x on train only'}")
+    log.info("=" * 60)
 
     if args.dataset != "include":
-        print("\n[ERROR] Only the INCLUDE dataset is wired to this isolated-sign pipeline.")
-        print("  iSign and ISLTranslate are continuous translation sets and are not used here.")
+        log.info("\n[ERROR] Only the INCLUDE dataset is wired to this isolated-sign pipeline.")
+        log.info("  iSign and ISLTranslate are continuous translation sets and are not used here.")
         return
 
     if args.kfold and args.kfold > 1:
-        print("\n[ERROR] --kfold is disabled.")
-        print("  Overlapping windows cannot be folded independently of their source video.")
-        print("  Evaluation is a single held-out test split grouped by video id.")
+        log.info("\n[ERROR] --kfold is disabled.")
+        log.info("  Overlapping windows cannot be folded independently of their source video.")
+        log.info("  Evaluation is a single held-out test split grouped by video id.")
         return
 
     if args.process_include:
         from process_videos import scan_include_dataset, process_dataset
         if not os.path.isdir(args.include_dir):
-            print(f"\n[ERROR] INCLUDE videos directory not found: {args.include_dir}")
-            print("  Download first: python download_dataset.py --dataset include")
+            log.info(f"\n[ERROR] INCLUDE videos directory not found: {args.include_dir}")
+            log.info("  Download first: python download_dataset.py --dataset include")
             return
-        print(f"\n[STEP 0] Processing INCLUDE videos from {args.include_dir}...")
+        log.info(f"\n[STEP 0] Processing INCLUDE videos from {args.include_dir}...")
         word_videos = scan_include_dataset(args.include_dir)
         process_dataset(
             word_videos,
@@ -191,10 +194,10 @@ def main():
 
     records = read_manifest()
     if not records:
-        print("\n[ERROR] No window manifest found.")
-        print("  1. python download_dataset.py --dataset include")
-        print("  2. python prepare_dataset.py --dataset include")
-        print("  3. python train.py --dataset include")
+        log.info("\n[ERROR] No window manifest found.")
+        log.info("  1. python download_dataset.py --dataset include")
+        log.info("  2. python prepare_dataset.py --dataset include")
+        log.info("  3. python train.py --dataset include")
         return
 
     if any(record.get("split") not in ("train", "val", "test") for record in records):
@@ -235,23 +238,23 @@ def main():
         skipped,
     ) = load_split_arrays(records)
 
-    print("\n[INFO] Video-level split")
-    print(f"  Train videos:      {len(summary['videos']['train'])}")
-    print(f"  Validation videos: {len(summary['videos']['val'])}")
-    print(f"  Test videos:       {len(summary['videos']['test'])}")
-    print(f"  Train windows:     {len(X_train)}")
-    print(f"  Val windows:       {len(X_val)}")
-    print(f"  Test windows:      {len(X_test)}")
+    log.info("\n[INFO] Video-level split")
+    log.info(f"  Train videos:      {len(summary['videos']['train'])}")
+    log.info(f"  Validation videos: {len(summary['videos']['val'])}")
+    log.info(f"  Test videos:       {len(summary['videos']['test'])}")
+    log.info(f"  Train windows:     {len(X_train)}")
+    log.info(f"  Val windows:       {len(X_val)}")
+    log.info(f"  Test windows:      {len(X_test)}")
     if skipped:
-        print(f"  Skipped windows:   {skipped}")
+        log.info(f"  Skipped windows:   {skipped}")
 
     if len(label_names) < 2 or len(X_train) == 0 or len(X_val) == 0 or len(X_test) == 0:
-        print("\n[ERROR] Need train, validation, and test windows from at least two classes.")
-        print("  A class with only one video cannot fill every split.")
-        print("  No test metric was written.")
+        log.info("\n[ERROR] Need train, validation, and test windows from at least two classes.")
+        log.info("  A class with only one video cannot fill every split.")
+        log.info("  No test metric was written.")
         return
 
-    print("\n[STEP 1] Applying the shared feature transform to validation and test.")
+    log.info("\n[STEP 1] Applying the shared feature transform to validation and test.")
     X_val = np.stack([
         training_features(seq, use_velocity=use_velocity) for seq in X_val
     ])
@@ -259,30 +262,30 @@ def main():
         training_features(seq, use_velocity=use_velocity) for seq in X_test
     ])
 
-    print("\n[STEP 1b] Normalizing the training split with normalize_hands_sequence.")
+    log.info("\n[STEP 1b] Normalizing the training split with normalize_hands_sequence.")
     X_train = np.stack([normalize_hands_sequence(seq) for seq in X_train])
 
     if not args.no_augment:
-        print(f"\n[STEP 2] Augmenting the training split only ({args.augment_factor}x).")
+        log.info(f"\n[STEP 2] Augmenting the training split only ({args.augment_factor}x).")
         X_train, y_train = augment_sequences(
             X_train, y_train, augment_factor=args.augment_factor, intensity=0.7
         )
         permutation = np.random.default_rng(config.SEED).permutation(len(X_train))
         X_train, y_train = X_train[permutation], y_train[permutation]
     else:
-        print("\n[STEP 2] Training split left unaugmented.")
+        log.info("\n[STEP 2] Training split left unaugmented.")
 
     if use_velocity:
-        print("\n[STEP 3] Adding velocity to the training split.")
+        log.info("\n[STEP 3] Adding velocity to the training split.")
         X_train = np.stack([build_feature_vector(seq) for seq in X_train])
     else:
-        print("\n[STEP 3] Velocity features off.")
+        log.info("\n[STEP 3] Velocity features off.")
 
     num_classes = len(label_names)
     num_features = X_train.shape[2]
     expected = config.NUM_FEATURES * (2 if use_velocity else 1)
     if num_features != expected:
-        print(f"\n[ERROR] Feature width {num_features} does not match pipeline width {expected}.")
+        log.info(f"\n[ERROR] Feature width {num_features} does not match pipeline width {expected}.")
         return
 
     os.makedirs(config.BUNDLE_DIR, exist_ok=True)
@@ -292,7 +295,7 @@ def main():
 
     from src.model import build_model, plot_training_history, train_model
 
-    print(f"\n[STEP 4] Building {args.model_type.upper()} model.")
+    log.info(f"\n[STEP 4] Building {args.model_type.upper()} model.")
     model = build_model(
         num_features, num_classes,
         seq_length=config.SEQUENCE_LENGTH,
@@ -303,7 +306,7 @@ def main():
         X_val_override=X_val, y_val_override=y_val,
     )
 
-    print("\n[STEP 5] Evaluating the held-out test split once.")
+    log.info("\n[STEP 5] Evaluating the held-out test split once.")
     probabilities = model.predict(X_test, verbose=0)
     y_pred = np.argmax(probabilities, axis=1)
     labels_present = list(range(num_classes))
@@ -311,12 +314,12 @@ def main():
         y_test, y_pred, labels=labels_present, target_names=label_names,
         digits=3, zero_division=0, output_dict=True,
     )
-    print(classification_report(
+    log.info(classification_report(
         y_test, y_pred, labels=labels_present, target_names=label_names,
         digits=3, zero_division=0,
     ))
-    print("Confusion matrix:")
-    print(confusion_matrix(y_test, y_pred, labels=labels_present))
+    log.info("Confusion matrix:")
+    log.info(confusion_matrix(y_test, y_pred, labels=labels_present))
 
     latency = _latency_ms(model, X_test)
     per_class_precision = {
@@ -357,6 +360,9 @@ def main():
         "per_class_precision": per_class_precision,
         "per_class_recall": per_class_recall,
         "per_class_f1": per_class_f1,
+        "class_counts": {
+            name: int(report[name]["support"]) for name in label_names if name in report
+        },
         "confusion_matrix": matrix.tolist(),
         "confusion_matrix_labels": label_names,
         "num_classes": num_classes,
@@ -405,14 +411,14 @@ def main():
         json.dump(metrics["experiment"], handle, indent=2)
     save_vocabulary(vocabulary)
 
-    print("\n[STEP 6] Generating training plots...")
+    log.info("\n[STEP 6] Generating training plots...")
     plot_training_history(history)
-    print("\n" + "=" * 60)
-    print("  Training complete. Test metrics are in the model bundle.")
-    print(f"  Test accuracy: {metrics['accuracy']:.4f}")
-    print(f"  Macro F1:      {metrics['macro_f1']:.4f}")
-    print(f"  Bundle:        {config.BUNDLE_DIR}")
-    print("=" * 60)
+    log.info("\n" + "=" * 60)
+    log.info("  Training complete. Test metrics are in the model bundle.")
+    log.info(f"  Test accuracy: {metrics['accuracy']:.4f}")
+    log.info(f"  Macro F1:      {metrics['macro_f1']:.4f}")
+    log.info(f"  Bundle:        {config.BUNDLE_DIR}")
+    log.info("=" * 60)
 
 
 def _categories_from_video_ids(video_ids) -> list:

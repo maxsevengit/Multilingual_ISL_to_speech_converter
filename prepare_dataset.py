@@ -14,6 +14,9 @@ import sys
 
 import config
 from process_videos import process_dataset, scan_include_dataset
+from src.logutil import get_logger
+
+log = get_logger("prepare")
 
 
 def main():
@@ -25,20 +28,20 @@ def main():
     args = parser.parse_args()
 
     if args.dataset != "include":
-        print("[ERROR] Only --dataset include is supported.")
-        print("  iSign and ISLTranslate are continuous translation resources.")
+        log.info("[ERROR] Only --dataset include is supported.")
+        log.info("  iSign and ISLTranslate are continuous translation resources.")
         sys.exit(2)
 
     if not os.path.isdir(args.input):
-        print(f"[ERROR] Video directory not found: {args.input}")
-        print("  Download it first. This script does not download data:")
-        print("    python download_dataset.py --dataset include")
+        log.info(f"[ERROR] Video directory not found: {args.input}")
+        log.info("  Download it first. This script does not download data:")
+        log.info("    python download_dataset.py --dataset include")
         sys.exit(2)
 
     word_videos = scan_include_dataset(args.input)
     if not word_videos:
-        print(f"[ERROR] No INCLUDE videos found under {args.input}")
-        print("  Expected: data/include_videos/<Category>/<Word>/*.mp4")
+        log.info(f"[ERROR] No INCLUDE videos found under {args.input}")
+        log.info("  Expected: data/include_videos/<Category>/<Word>/*.mp4")
         sys.exit(2)
 
     total, words = process_dataset(
@@ -47,8 +50,8 @@ def main():
         max_videos_per_word=args.max_videos,
         base_dir=config.BASE_DIR,
     )
-    print(f"[INFO] Prepared {total} windows across {len(words)} words.")
-    print(f"[INFO] Manifest: {config.MANIFEST_PATH}")
+    log.info(f"[INFO] Prepared {total} windows across {len(words)} words.")
+    log.info(f"[INFO] Manifest: {config.MANIFEST_PATH}")
 
 
 if __name__ == "__main__":

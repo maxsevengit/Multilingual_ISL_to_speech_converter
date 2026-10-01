@@ -30,6 +30,9 @@ from src.landmark_extractor import LandmarkExtractor
 from src.manifest import save_window, window_records_from_frames, write_manifest
 from src.splits import assert_no_leakage, assign_splits
 from src.manifest import write_split
+from src.logutil import get_logger
+
+log = get_logger("process")
 
 
 def scan_include_dataset(input_dir: str) -> dict:
@@ -129,7 +132,7 @@ def process_video(video_path: str, extractor: LandmarkExtractor) -> list:
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"      [WARN] Cannot open: {os.path.basename(video_path)}")
+        log.info(f"      [WARN] Cannot open: {os.path.basename(video_path)}")
         return []
     
     landmarks_list = []
@@ -190,15 +193,15 @@ def process_dataset(word_videos: dict, output_dir: str = None,
     records = []
     processed_words = []
     
-    print(f"\n  Processing {len(words)} words into raw landmark windows...")
-    print(f"  Manifest: {config.MANIFEST_PATH}\n")
+    log.info(f"\n  Processing {len(words)} words into raw landmark windows...")
+    log.info(f"  Manifest: {config.MANIFEST_PATH}\n")
     
     for word_idx, word in enumerate(words):
         videos = word_videos[word]
         if max_videos_per_word:
             videos = videos[:max_videos_per_word]
         
-        print(f"  [{word_idx+1}/{len(words)}] {word}: processing {len(videos)} videos...")
+        log.info(f"  [{word_idx+1}/{len(words)}] {word}: processing {len(videos)} videos...")
         word_windows = 0
         
         for vid_idx, video_path in enumerate(videos):
@@ -216,9 +219,9 @@ def process_dataset(word_videos: dict, output_dir: str = None,
                 word_windows += 1
             
             if (vid_idx + 1) % 10 == 0:
-                print(f"    Processed {vid_idx+1}/{len(videos)} videos ({word_windows} windows)")
+                log.info(f"    Processed {vid_idx+1}/{len(videos)} videos ({word_windows} windows)")
         
-        print(f"    -> {word_windows} windows saved for '{word}'")
+        log.info(f"    -> {word_windows} windows saved for '{word}'")
         if word_windows:
             processed_words.append(word)
     
@@ -229,11 +232,11 @@ def process_dataset(word_videos: dict, output_dir: str = None,
     write_manifest(records, config.MANIFEST_PATH)
     write_split(summary, config.SPLIT_PATH)
     
-    print(f"\n  Split strategy: {summary['strategy']}")
-    print(f"  Videos: {summary['counts']['videos']}")
-    print(f"  Windows: {summary['counts']['windows']}")
+    log.info(f"\n  Split strategy: {summary['strategy']}")
+    log.info(f"  Videos: {summary['counts']['videos']}")
+    log.info(f"  Windows: {summary['counts']['windows']}")
     if summary.get("limitation"):
-        print(f"  Note: {summary['limitation']}")
+        log.info(f"  Note: {summary['limitation']}")
     
     return len(records), processed_words
 
@@ -273,7 +276,7 @@ Examples:
     
     # Validate input
     if not os.path.isdir(args.input):
-        print(f"[ERROR] Input directory not found: {args.input}")
+        log.info(f"[ERROR] Input directory not found: {args.input}")
         sys.exit(1)
     
     # Set output directory
@@ -281,12 +284,12 @@ Examples:
     output_dir = args.output or os.path.join(base_dir, "data", "raw")
     os.makedirs(output_dir, exist_ok=True)
     
-    print("=" * 60)
-    print("  ISL Video to Landmark Processor")
-    print("=" * 60)
+    log.info("=" * 60)
+    log.info("  ISL Video to Landmark Processor")
+    log.info("=" * 60)
     
     # ── Scan dataset ─────────────────────────────────────────────────────────
-    print(f"\n  Scanning {args.input}...")
+    log.info(f"\n  Scanning {args.input}...")
     
     if args.format == 'include':
         word_videos = scan_include_dataset(args.input)
@@ -294,20 +297,20 @@ Examples:
         word_videos = scan_generic_dataset(args.input)
     
     if not word_videos:
-        print("[ERROR] No videos found! Check your directory structure.")
-        print("  Expected format:")
+        log.info("[ERROR] No videos found! Check your directory structure.")
+        log.info("  Expected format:")
         if args.format == 'include':
-            print("    input_dir/Category/WordName/video.mp4")
+            log.info("    input_dir/Category/WordName/video.mp4")
         else:
-            print("    input_dir/WordName/video.mp4")
+            log.info("    input_dir/WordName/video.mp4")
         sys.exit(1)
     
     # ── Print summary ────────────────────────────────────────────────────────
     total_videos = sum(len(v) for v in word_videos.values())
-    print(f"  Found {len(word_videos)} words, {total_videos} total videos")
-    print(f"\n  Words: {', '.join(sorted(word_videos.keys())[:15])}")
+    log.info(f"  Found {len(word_videos)} words, {total_videos} total videos")
+    log.info(f"\n  Words: {', '.join(sorted(word_videos.keys())[:15])}")
     if len(word_videos) > 15:
-        print(f"    ... and {len(word_videos) - 15} more")
+        log.info(f"    ... and {len(word_videos) - 15} more")
     
     # ── Process ──────────────────────────────────────────────────────────────
     total_samples, words = process_dataset(
@@ -316,13 +319,13 @@ Examples:
         max_videos_per_word=args.max_videos
     )
     
-    print(f"\n{'='*60}")
-    print(f"  Processing Complete!")
-    print(f"  Total: {total_samples} samples across {len(words)} words")
-    print(f"  Output: data/processed and data/manifests/samples.jsonl")
-    print(f"\n  Next step: Train the model:")
-    print(f"  python train.py --dataset include")
-    print(f"{'='*60}")
+    log.info(f"\n{'='*60}")
+    log.info(f"  Processing Complete!")
+    log.info(f"  Total: {total_samples} samples across {len(words)} words")
+    log.info(f"  Output: data/processed and data/manifests/samples.jsonl")
+    log.info(f"\n  Next step: Train the model:")
+    log.info(f"  python train.py --dataset include")
+    log.info(f"{'='*60}")
 
 
 if __name__ == "__main__":

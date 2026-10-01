@@ -15,6 +15,10 @@ import threading
 import subprocess
 from dotenv import load_dotenv
 
+from src.logutil import get_logger
+
+log = get_logger("translator")
+
 # Load environment variables (API Key)
 load_dotenv()
 
@@ -96,7 +100,7 @@ class ISLTranslator:
             self._speak_macos(translated_text, target_lang)
                 
         except Exception as e:
-            print(f"[ERROR] Translation failed: {e}")
+            log.info(f"[ERROR] Translation failed: {e}")
             self.last_translation = "Translation Failed!"
         finally:
             self.is_translating = False
@@ -124,7 +128,7 @@ class ISLTranslator:
                 response = self.model.generate_content(prompt)
                 return (response.text or "").strip()
             except Exception as e:
-                print(f"[WARNING] Gemini translation failed (using offline fallback): {e}")
+                log.info(f"[WARNING] Gemini translation failed (using offline fallback): {e}")
                 # Disable Gemini for future calls if it fails due to API key errors
                 if "403" in str(e) or "API key" in str(e):
                     self.is_configured = False

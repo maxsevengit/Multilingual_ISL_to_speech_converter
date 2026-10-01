@@ -93,7 +93,7 @@ TEST_RATIO = 0.15
 # from the bundle config.json, not from this constant.
 # 'tcn' is the baseline. 'lstm', 'gru', 'mlp', and 'transformer' already
 # exist for a later comparison and are not the default.
-MODEL_TYPE = 'tcn'
+MODEL_TYPE = 'gru'
 
 MLP_UNITS_1 = 128          # First dense layer (MLP mode)
 MLP_UNITS_2 = 64           # Second dense layer (MLP mode)

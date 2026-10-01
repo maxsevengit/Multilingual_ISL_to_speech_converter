@@ -21,6 +21,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import cv2
 import numpy as np
 import config
+from src.logutil import get_logger
 from src.preprocessing import normalize_frame, convert_color
 from src.landmark_extractor import LandmarkExtractor
 from src.recognizer import GestureRecognizer
@@ -28,6 +29,8 @@ from src.dataset import collect_training_data
 from src.model_bundle import BundleMismatchError, load_model_bundle
 from src.translator import ISLTranslator
 from src.utils import FPSCounter, draw_info_panel
+
+log = get_logger("main")
 
 
 def _open_video_source(video_path: str = None):
@@ -45,7 +48,7 @@ def _open_video_source(video_path: str = None):
     if video_path:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            print(f"[ERROR] Cannot open video file: {video_path}")
+            log.info(f"[ERROR] Cannot open video file: {video_path}")
             return None, False, ""
         source_name = video_path
         return cap, False, source_name
@@ -54,7 +57,7 @@ def _open_video_source(video_path: str = None):
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
         if not cap.isOpened():
-            print("[ERROR] Cannot open webcam.")
+            log.info("[ERROR] Cannot open webcam.")
             return None, True, ""
         source_name = "Webcam"
         return cap, True, source_name
@@ -80,25 +83,25 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
         video_path: Path to video file, or None for webcam.
     """
     # ── Load model and vocabulary ────────────────────────────────────────────
-    print("[INFO] Loading model bundle...")
+    log.info("[INFO] Loading model bundle...")
     try:
         bundle = load_model_bundle()
     except BundleMismatchError as exc:
-        print(f"\n[ERROR] {exc}")
+        log.info(f"\n[ERROR] {exc}")
         return
     except Exception as exc:
-        print(f"\n[ERROR] Could not load model bundle: {exc}")
-        print("  Train first: python train.py --dataset include")
+        log.info(f"\n[ERROR] Could not load model bundle: {exc}")
+        log.info("  Train first: python train.py --dataset include")
         return
 
     model = bundle.model
     vocab = bundle.vocabulary
     label_names = vocab["words"]
     use_velocity = bool(bundle.config["use_velocity"])
-    print(f"[INFO] Bundle: {bundle.directory}")
-    print(f"[INFO] Architecture: {bundle.config['model_type']}")
-    print(f"[INFO] Vocabulary: {label_names}")
-    print(f"[INFO] Velocity features: {'ON' if use_velocity else 'OFF'}")
+    log.info(f"[INFO] Bundle: {bundle.directory}")
+    log.info(f"[INFO] Architecture: {bundle.config['model_type']}")
+    log.info(f"[INFO] Vocabulary: {label_names}")
+    log.info(f"[INFO] Velocity features: {'ON' if use_velocity else 'OFF'}")
     
     # ── Open video source ────────────────────────────────────────────────────
     cap, is_webcam, source_name = _open_video_source(video_path)
@@ -106,7 +109,7 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
         return
     
     mode_label = "WEBCAM" if is_webcam else "VIDEO"
-    print(f"[INFO] Source: {source_name}")
+    log.info(f"[INFO] Source: {source_name}")
     
     # ── Initialize components (SAME for both modes) ──────────────────────────
     extractor = LandmarkExtractor()
@@ -133,17 +136,17 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
         scale = min(max_display_h / frame_h, 640 / frame_w)
         display_w = int(frame_w * scale)
         display_h = int(frame_h * scale)
-        print(f"[INFO] Resizing display: {frame_w}x{frame_h} → {display_w}x{display_h}")
+        log.info("[INFO] Resizing display: %sx%s to %sx%s", frame_w, frame_h, display_w, display_h)
     
-    print(f"\n{'='*50}")
-    print(f"  ISL Real-Time Recognition — {mode_label}")
+    log.info(f"\n{'='*50}")
+    log.info("  ISL recognition - %s", mode_label)
     if not is_webcam:
-        print(f"  Video: {source_name}")
-        print(f"  Press SPACE to pause/resume")
-    print(f"  Press 'q' to quit, 'c' to clear")
-    print(f"  Press 't' to translate sentence")
-    print(f"  Press 'l' to change language")
-    print(f"{'='*50}\n")
+        log.info(f"  Video: {source_name}")
+        log.info(f"  Press SPACE to pause/resume")
+    log.info(f"  Press 'q' to quit, 'c' to clear")
+    log.info(f"  Press 't' to translate sentence")
+    log.info(f"  Press 'l' to change language")
+    log.info(f"{'='*50}\n")
     
     try:
         while True:
@@ -158,9 +161,9 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
             ret, frame = cap.read()
             if not ret:
                 if not is_webcam:
-                    print("\n[INFO] Video ended.")
+                    log.info("\n[INFO] Video ended.")
                 else:
-                    print("[ERROR] Failed to read frame.")
+                    log.info("[ERROR] Failed to read frame.")
                 break
             
             current_frame_num += 1
@@ -194,7 +197,7 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
                 if raw_word is not None and raw_word != "IDLE":
                     word = raw_word
                     confidence = raw_confidence
-                    print(f"  ✓ Recognized: {word} ({confidence:.0%})")
+                    log.info("  Recognized: %s (%.0f%%)", word, confidence * 100)
             
             # ═════════════════════════════════════════════════════════════════
             
@@ -212,7 +215,9 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
                 fps=fps,
                 mode=mode_label,
                 translation=translator.last_translation,
-                target_language=translator.get_current_language()
+                target_language=translator.get_current_language(),
+                model_name=str(bundle.config.get("model_type", "")).upper(),
+                camera_status="Camera: open" if cap.isOpened() else "Camera: no signal",
             )
             
             # ── Show hand detection status ───────────────────────────────────
@@ -250,22 +255,22 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
                 break
             elif key == ord('c'):
                 recognizer.clear_sentence()
-                print("  [CLEARED] Sentence reset.")
+                log.info("  [CLEARED] Sentence reset.")
             elif key == ord('r'):
                 recognizer.reset()
-                print("  [RESET] Recognizer reset.")
+                log.info("  [RESET] Recognizer reset.")
             elif key == ord('t'):
                 if sentence:
-                    print(f"  [TRANSLATE] Generating {translator.get_current_language()} speech...")
+                    log.info(f"  [TRANSLATE] Generating {translator.get_current_language()} speech...")
                     translator.translate_and_speak_async(sentence)
                 else:
-                    print("  [WARNING] Empty sentence, nothing to translate.")
+                    log.info("  [WARNING] Empty sentence, nothing to translate.")
             elif key == ord('l'):
                 new_lang = translator.next_language()
-                print(f"  [LANGUAGE] Switched to {new_lang}")
+                log.info(f"  [LANGUAGE] Switched to {new_lang}")
             elif key == ord(' ') and not is_webcam:
                 paused = True
-                print("  [PAUSED] Press SPACE to resume.")
+                log.info("  [PAUSED] Press SPACE to resume.")
     
     finally:
         cap.release()
@@ -275,9 +280,9 @@ def run_recognition(use_velocity: bool = False, video_path: str = None):
     # ── Print final output ───────────────────────────────────────────────────
     final_sentence = recognizer.get_sentence()
     if final_sentence:
-        print(f"\n{'='*50}")
-        print(f"  Final recognized words: {final_sentence}")
-        print(f"{'='*50}")
+        log.info(f"\n{'='*50}")
+        log.info(f"  Final recognized words: {final_sentence}")
+        log.info(f"{'='*50}")
 
 
 def main():
@@ -314,8 +319,8 @@ Examples:
     
     if args.mode == 'collect':
         if args.word is None:
-            print("[ERROR] --word is required in collect mode!")
-            print("  Example: python main.py --mode collect --word HELLO")
+            log.info("[ERROR] --word is required in collect mode!")
+            log.info("  Example: python main.py --mode collect --word HELLO")
             sys.exit(1)
         
         collect_training_data(args.word, args.samples)

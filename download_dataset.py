@@ -18,6 +18,10 @@ import sys
 import zipfile
 import urllib.request
 
+from src.logutil import get_logger
+
+log = get_logger("download")
+
 # ─── INCLUDE Dataset on Zenodo ────────────────────────────────────────────────
 ZENODO_BASE = "https://zenodo.org/records/4010759/files"
 
@@ -95,12 +99,12 @@ def download_file(url: str, dest_path: str, retries: int = 3):
             if os.path.exists(dest_path):
                 os.remove(dest_path)
             urllib.request.urlretrieve(url, dest_path, progress_hook)
-            print()
+            sys.stdout.write("\n")
             return  # success
         except Exception as e:
-            print(f"\n    [WARN] Attempt {attempt}/{retries} failed: {e}")
+            log.info(f"\n    [WARN] Attempt {attempt}/{retries} failed: {e}")
             if attempt < retries:
-                print(f"    Retrying in 5 seconds...")
+                log.info(f"    Retrying in 5 seconds...")
                 time.sleep(5)
             else:
                 raise  # re-raise after all retries exhausted
@@ -108,7 +112,7 @@ def download_file(url: str, dest_path: str, retries: int = 3):
 
 def extract_zip(zip_path: str, extract_dir: str):
     """Extract a zip file and remove it afterwards."""
-    print(f"    Extracting {os.path.basename(zip_path)}...")
+    log.info(f"    Extracting {os.path.basename(zip_path)}...")
     with zipfile.ZipFile(zip_path, 'r') as zf:
         zf.extractall(extract_dir)
     os.remove(zip_path)
@@ -117,12 +121,12 @@ def extract_zip(zip_path: str, extract_dir: str):
 def download_category(category: str, download_dir: str):
     """Download and extract all zip parts for a category."""
     if category not in DATASET_CATEGORIES:
-        print(f"  [ERROR] Unknown category: {category}")
-        print(f"  Available: {', '.join(DATASET_CATEGORIES.keys())}")
+        log.info(f"  [ERROR] Unknown category: {category}")
+        log.info(f"  Available: {', '.join(DATASET_CATEGORIES.keys())}")
         return False
 
     zip_files = DATASET_CATEGORIES[category]
-    print(f"\n  Downloading category: {category} ({len(zip_files)} parts)")
+    log.info(f"\n  Downloading category: {category} ({len(zip_files)} parts)")
     
     # Always ensure the output directory exists
     os.makedirs(download_dir, exist_ok=True)
@@ -133,13 +137,13 @@ def download_category(category: str, download_dir: str):
         zip_path = os.path.join(download_dir, zip_name)
 
         if os.path.exists(zip_path):
-            print(f"    {zip_name} already exists, skipping download.")
+            log.info(f"    {zip_name} already exists, skipping download.")
         else:
-            print(f"    Downloading {zip_name}...")
+            log.info(f"    Downloading {zip_name}...")
             try:
                 download_file(url, zip_path)  # has built-in retries
             except Exception as e:
-                print(f"    [ERROR] Failed to download {zip_name} after all retries: {e}")
+                log.info(f"    [ERROR] Failed to download {zip_name} after all retries: {e}")
                 all_ok = False
                 continue  # skip to next file instead of crashing everything
 
@@ -147,7 +151,7 @@ def download_category(category: str, download_dir: str):
             try:
                 extract_zip(zip_path, download_dir)
             except Exception as e:
-                print(f"    [ERROR] Failed to extract {zip_name}: {e}")
+                log.info(f"    [ERROR] Failed to extract {zip_name}: {e}")
                 all_ok = False
 
     return all_ok
@@ -155,13 +159,13 @@ def download_category(category: str, download_dir: str):
 
 def list_categories():
     """Print available categories and their zip file counts."""
-    print("\nAvailable INCLUDE Dataset Categories:")
-    print("=" * 55)
+    log.info("\nAvailable INCLUDE Dataset Categories:")
+    log.info("=" * 55)
     for name, zips in sorted(DATASET_CATEGORIES.items()):
         marker = " ★" if name in DEFAULT_CATEGORIES else ""
-        print(f"  {name:<30} ({len(zips)} parts){marker}")
-    print(f"\n★ = included in default download")
-    print(f"Default categories: {', '.join(DEFAULT_CATEGORIES)}")
+        log.info(f"  {name:<30} ({len(zips)} parts){marker}")
+    log.info(f"\n★ = included in default download")
+    log.info(f"Default categories: {', '.join(DEFAULT_CATEGORIES)}")
 
 
 def main():
@@ -194,10 +198,10 @@ Examples:
         return
 
     if args.dataset != "include":
-        print("[ERROR] Only the INCLUDE dataset can be downloaded by this script.")
-        print("  Source: https://zenodo.org/records/4010759")
-        print("  License: CC-BY-4.0")
-        print("  iSign / ISLTranslate are continuous translation sets and are not downloaded.")
+        log.info("[ERROR] Only the INCLUDE dataset can be downloaded by this script.")
+        log.info("  Source: https://zenodo.org/records/4010759")
+        log.info("  License: CC-BY-4.0")
+        log.info("  iSign / ISLTranslate are continuous translation sets and are not downloaded.")
         sys.exit(2)
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -211,24 +215,23 @@ Examples:
     else:
         categories = DEFAULT_CATEGORIES
 
-    print("=" * 60)
-    print("  INCLUDE ISL Dataset Downloader")
-    print("=" * 60)
-    print(f"  Output: {output_dir}")
-    print(f"  Categories: {', '.join(categories)}")
-    print()
+    log.info("=" * 60)
+    log.info("  INCLUDE ISL Dataset Downloader")
+    log.info("=" * 60)
+    log.info(f"  Output: {output_dir}")
+    log.info("  Categories: %s", ", ".join(categories))
 
     success = 0
     for cat in categories:
         if download_category(cat, output_dir):
             success += 1
 
-    print(f"\n{'='*60}")
-    print(f"  Download complete: {success}/{len(categories)} categories")
-    print(f"  Videos saved to: {output_dir}")
-    print(f"\n  Next step: Process the videos into landmark data:")
-    print(f"    python process_videos.py --input {output_dir}")
-    print(f"{'='*60}")
+    log.info(f"\n{'='*60}")
+    log.info(f"  Download complete: {success}/{len(categories)} categories")
+    log.info(f"  Videos saved to: {output_dir}")
+    log.info(f"\n  Next step: Process the videos into landmark data:")
+    log.info(f"    python process_videos.py --input {output_dir}")
+    log.info(f"{'='*60}")
 
 
 if __name__ == "__main__":

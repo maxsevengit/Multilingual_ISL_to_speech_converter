@@ -1,12 +1,12 @@
 # ISL Gesture Recognition System
 
-Isolated Indian Sign Language gloss classification. MediaPipe Hand Landmarker supplies raw hand landmarks. One normalization function feeds a temporal classifier. The shipped baseline is the TCN in `config.MODEL_TYPE`. LSTM, GRU, and a small Transformer were compared on the same INCLUDE Seasons split and are not the default.
+Isolated Indian Sign Language gloss classification. MediaPipe Hand Landmarker supplies raw hand landmarks. One normalization function feeds a temporal classifier. The production model is the GRU in `config.MODEL_TYPE`, chosen from a five-model comparison on the INCLUDE Seasons test split.
 
 ## Features
 
 - **MediaPipe Hand Landmarker** for both hands. Pose is not estimated.
 - **One landmark normalization** (`normalize_hands_sequence`) shared by training and live inference
-- **TCN baseline** (`config.MODEL_TYPE`). Other architectures remain available and are not the shipped default
+- **GRU production model** (`config.MODEL_TYPE`). LSTM, TCN, MLP, and a one-block Transformer were trained on the same split
 - **Video-level train/validation/test split** so overlapping windows from one video stay together
 - **INCLUDE dataset** as the isolated-sign training source
 - **Model bundle** that refuses to load when the feature width, sequence length, vocabulary, or architecture disagree
@@ -123,12 +123,11 @@ Video
 
 ### Model
 
-The training default is the TCN in `config.MODEL_TYPE`. A trained bundle records that choice in `models/isl_baseline_v1/config.json`, and inference loads that file. `vocab/words.json` uses the same feature width.
+The training default is the GRU in `config.MODEL_TYPE`. A trained bundle records that choice in `models/isl_baseline_v1/config.json`, and inference loads that file.
 
 ```
 Input (30 frames x 252 features with velocity, or 126 without)
-  -> dilated causal Conv1D stack
-  -> global average pool
+  -> GRU(128) -> GRU(64)
   -> Dense
   -> softmax
 ```
@@ -168,60 +167,48 @@ Verify a download by checking that `data/include_videos/<Category>/<Word>/*.mp4`
 
 ## Evaluation
 
-Scores below are held-out test numbers written by `train.py`. Validation accuracy printed during training is not the model score.
+Scores below are held-out test numbers written by `compare_models.py` into `models/comparison/*/metrics.json`. The production copy is `models/isl_baseline_v1/metrics.json`. Validation accuracy during training is not the model score.
 
-### Baseline result
+Data: INCLUDE Seasons only. 85 videos, 6 classes. No signer ids in the public files, so the split is by `video_id` (seed 42): 61 train / 12 validation / 12 test videos. Test windows: 58. Class counts on that test set: FALL 6, MONSOON 8, SEASON 17, SPRING 11, SUMMER 8, WINTER 8. Features: 30 frames by 252 values. Same augmentation budget for every model (5x on the training windows only, 200 epochs, early stopping patience 30, batch 32). LSTM `recurrent_dropout` is 0 so the latency measurement does not force the slow LSTM kernel.
 
-Command: `python train.py --dataset include`
+`python benchmark.py` prints the production model name, P50/P95 milliseconds, FPS, file size, test accuracy, and macro F1.
 
-Data: INCLUDE Seasons only (Zenodo `Seasons_1of1.zip`). 85 videos, 6 classes (`FALL`, `MONSOON`, `SEASON`, `SPRING`, `SUMMER`, `WINTER`). Public files do not include signer ids, so the split is by `video_id` (seed 42): 61 train / 12 validation / 12 test videos. Windows from one video stay in one split. Augmentation (5x) runs only on the training windows after the split: 299 train windows become 1,794 training samples. Validation windows: 63. Test windows: 58. Features: 30 frames by 252 values (126 raw hand landmarks plus velocity). Model: TCN. Bundle: `models/isl_baseline_v1/`.
+### Production result
 
-| Metric | Value |
-| --- | ---: |
-| Test accuracy | 0.983 |
-| Macro precision | 0.976 |
-| Macro recall | 0.979 |
-| Macro F1 | 0.976 |
-| Test windows | 58 |
-| Classes | 6 |
-| Parameters | 287,814 |
-| Model size | 3,555,367 bytes |
-| CPU latency, batch 1, P50 | 158 ms |
-| CPU latency, batch 1, P95 | 182 ms |
+GRU. Test accuracy 0.948. Macro precision 0.937. Macro recall 0.949. Macro F1 0.940. Parameters 188,486. Model size 2,307,916 bytes. Batch-1 CPU latency after warmup: P50 66 ms, P95 75 ms.
 
-Per-class test F1: FALL 0.923, MONSOON 0.933, SEASON 1.000, SPRING 1.000, SUMMER 1.000, WINTER 1.000. The only test error is one MONSOON window predicted as FALL. Early stopping restored epoch 12. That epoch's validation accuracy was 0.810, which is lower than the test accuracy. The test set is 58 windows from 12 videos, so this score is a noisy estimate.
+Per-class test F1: FALL 0.923, MONSOON 0.933, SEASON 0.970, SPRING 1.000, SUMMER 0.941, WINTER 0.875.
+
+The test set is 58 windows from 12 videos, so these scores move when the initialization changes.
 
 ### Model comparison
 
-LSTM, GRU, TCN, and a small Transformer were trained after the baseline, on the same manifest, the same video split, the same features, and the same epoch budget (200 max, early stopping patience 30, batch 32, Adam, seed 42). Each comparison run also called `keras.utils.set_random_seed(42)` before training. The baseline TCN above was trained before that call, so `models/comparison/tcn` is a second TCN initialization and is the TCN row in the table. Latency is one window at a time on CPU after five warmup calls.
-
 | Model | Test Accuracy | Macro F1 | P50 CPU Latency | P95 CPU Latency | Parameters | Model Size |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| LSTM | 0.966 | 0.965 | 173 ms | 267 ms | 476,870 | 5,784,353 bytes |
-| GRU | 0.948 | 0.940 | 167 ms | 188 ms | 188,486 | 2,307,916 bytes |
-| TCN | 0.931 | 0.927 | 158 ms | 180 ms | 287,814 | 3,555,368 bytes |
-| Transformer | 0.966 | 0.961 | 228 ms | 272 ms | 527,386 | 6,575,721 bytes |
+| LSTM | 0.948 | 0.936 | 64 ms | 70 ms | 476,870 | 5,784,354 bytes |
+| GRU | 0.948 | 0.940 | 66 ms | 75 ms | 188,486 | 2,307,916 bytes |
+| TCN | 0.931 | 0.927 | 66 ms | 81 ms | 287,814 | 3,555,368 bytes |
+| MLP | 0.879 | 0.882 | 66 ms | 88 ms | 976,454 | 11,747,674 bytes |
+| Transformer | 0.966 | 0.961 | 66 ms | 76 ms | 527,386 | 6,575,721 bytes |
 
-Per-class test F1 for those four runs:
+Per-class test F1:
 
-| Class | LSTM | GRU | TCN | Transformer |
-| --- | ---: | ---: | ---: | ---: |
-| FALL | 1.000 | 0.923 | 1.000 | 1.000 |
-| MONSOON | 0.933 | 0.933 | 0.933 | 0.933 |
-| SEASON | 0.970 | 0.970 | 0.919 | 1.000 |
-| SPRING | 1.000 | 1.000 | 1.000 | 0.957 |
-| SUMMER | 1.000 | 0.941 | 0.769 | 1.000 |
-| WINTER | 0.889 | 0.875 | 0.941 | 0.875 |
+| Class | LSTM | GRU | TCN | MLP | Transformer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| FALL | 0.857 | 0.923 | 1.000 | 0.833 | 1.000 |
+| MONSOON | 0.933 | 0.933 | 0.933 | 0.933 | 0.933 |
+| SEASON | 1.000 | 0.970 | 0.919 | 0.848 | 1.000 |
+| SPRING | 0.952 | 1.000 | 1.000 | 0.900 | 0.957 |
+| SUMMER | 1.000 | 0.941 | 0.769 | 0.889 | 1.000 |
+| WINTER | 0.875 | 0.875 | 0.941 | 0.889 | 0.875 |
 
-The seeded TCN scores 0.927 macro F1. The baseline TCN scores 0.976. That gap is larger than the gap between LSTM and the seeded TCN, so architecture ranking on 58 test windows is not stable across initializations.
+The Bi-LSTM does not win this table. Its macro F1 is 0.936 against 0.940 for the GRU, and its P95 latency is 70 ms. With `recurrent_dropout` left at 0, the LSTM is not the slow model.
 
-### Production candidate
-
-The production bundle stays `models/isl_baseline_v1` (TCN). In the seeded comparison, LSTM has the highest macro F1 (0.965) and the Transformer is close (0.961). LSTM's P95 latency is 267 ms against 180 ms for the seeded TCN, and the Transformer is slower still (P95 272 ms). GRU is smaller and close in latency, with macro F1 0.940. None of those trade-offs replaces the baseline checkpoint. A single 30-frame window takes about 160–270 ms on this CPU, which is the measured latency. It is not a frame-rate figure.
+The Transformer has the highest macro F1 (0.961) and a P95 of 76 ms, which is slower than the GRU. It is one attention block on six classes, so it stays an ablation. The installed production model is the GRU.
 
 ### Future work
 
-Signer-independent evaluation needs signer ids, which this Seasons download does not provide. A larger INCLUDE subset, repeated seeds, and a held-out signer split would be required before treating the test score as stable. Continuous signing, sentence generation, and other languages are not part of this result.
+Signer-independent evaluation needs signer ids, which this Seasons download does not provide. A larger INCLUDE subset and repeated seeds would be required before treating the test score as stable.
 
 ## Running Tests
 

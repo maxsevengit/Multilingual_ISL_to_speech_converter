@@ -9,9 +9,21 @@ gating to produce a clean word stream.
 from __future__ import annotations
 
 import collections
+from dataclasses import dataclass
+
 import numpy as np
+
 import config
 from src.feature_engineer import create_sequence, live_features
+
+
+@dataclass
+class RecognitionResult:
+    """One closed-set prediction. probabilities aligns with label_names."""
+
+    gloss: str
+    confidence: float
+    probabilities: np.ndarray
 
 
 class GestureRecognizer:
@@ -59,6 +71,75 @@ class GestureRecognizer:
         # Latest prediction info
         self.current_prediction = None
         self.current_confidence = 0.0
+        self._infer_fn = None
+        self._compile_inference()
+
+    def _compile_inference(self):
+        """Warm one tf.function for batch-1 inference. Mocks keep model.predict."""
+        input_shape = getattr(self.model, "input_shape", None)
+        if not input_shape or not callable(self.model):
+            return
+        try:
+            import tensorflow as tf
+        except ImportError:
+            return
+        try:
+            shape = tuple(1 if dim is None else int(dim) for dim in input_shape)
+        except (TypeError, ValueError):
+            return
+        signature = tf.TensorSpec(shape=shape, dtype=tf.float32)
+        model = self.model
+
+        @tf.function(input_signature=[signature])
+        def infer(batch):
+            return model(batch, training=False)
+
+        infer(tf.zeros(shape, dtype=tf.float32))
+        self._infer_fn = infer
+
+    def predict(self, sequence: np.ndarray) -> RecognitionResult:
+        """
+        Score one model-ready sequence.
+
+        Returns the gloss, its confidence, and the full probability vector.
+        The OpenCV loop and any later HTTP route both call this method.
+        """
+        array = np.asarray(sequence, dtype=np.float32)
+        if array.ndim == 2:
+            batch = array[np.newaxis, ...]
+        elif array.ndim == 3 and array.shape[0] == 1:
+            batch = array
+        else:
+            raise ValueError(
+                "predict expects one sequence shaped (frames, features) "
+                f"or (1, frames, features). Got {array.shape}."
+            )
+
+        input_shape = getattr(self.model, "input_shape", None)
+        if input_shape is not None and len(input_shape) == 2:
+            batch = batch.reshape((batch.shape[0], -1))
+        expected_width = input_shape[-1] if input_shape is not None and len(input_shape) >= 2 else None
+        if expected_width is not None and batch.shape[-1] != expected_width:
+            raise ValueError(
+                f"Checkpoint expects {expected_width} features. "
+                f"Current pipeline produces {batch.shape[-1]} features. "
+                "Model loading aborted due to incompatible feature specification."
+            )
+
+        if self._infer_fn is not None:
+            import tensorflow as tf
+            output = self._infer_fn(tf.constant(batch))
+            probabilities = np.asarray(output)[0]
+        else:
+            probabilities = np.asarray(self.model.predict(batch, verbose=0))[0]
+
+        probabilities = probabilities.astype(np.float32, copy=False)
+        index = int(np.argmax(probabilities))
+        return RecognitionResult(
+            gloss=self.label_names[index],
+            confidence=float(probabilities[index]),
+            probabilities=probabilities,
+        )
     
     def update(self, landmarks: np.ndarray):
         """
@@ -83,35 +164,13 @@ class GestureRecognizer:
             create_sequence(list(self.frame_buffer)),
             use_velocity=self.use_velocity_features,
         )
-        expected_width = None
-        input_shape = getattr(self.model, "input_shape", None)
-        if input_shape is not None and len(input_shape) >= 2:
-            expected_width = input_shape[-1]
-        if expected_width is not None and sequence.shape[-1] != expected_width:
-            raise ValueError(
-                f"Checkpoint expects {expected_width} features. "
-                f"Current pipeline produces {sequence.shape[-1]} features. "
-                "Model loading aborted due to incompatible feature specification."
-            )
-        
-        # Run model inference
-        input_data = np.expand_dims(sequence, axis=0)
-        if input_shape is not None and len(input_shape) == 2:
-            input_data = input_data.reshape((input_data.shape[0], -1))
-        predictions = self.model.predict(input_data, verbose=0)[0]
-        
-        predicted_idx = np.argmax(predictions)
-        confidence = float(predictions[predicted_idx])
-        predicted_word = self.label_names[predicted_idx]
+        result = self.predict(sequence)
+        predicted_word = result.gloss
+        confidence = result.confidence
         
         # Update current prediction for display
         self.current_prediction = predicted_word
         self.current_confidence = confidence
-        
-        # DEBUG: Print top 3 predictions
-        top_indices = np.argsort(predictions)[-3:][::-1]
-        top_preds = [(self.label_names[i], f"{predictions[i]:.2f}") for i in top_indices]
-        print(f"[DEBUG] {len(self.frame_buffer)} frames -> Top 3: {top_preds}")
         
         # Add to prediction buffer for smoothing
         self.prediction_buffer.append((predicted_word, confidence))

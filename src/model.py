@@ -44,14 +44,15 @@ def build_lstm_model(num_features: int, num_classes: int,
     x = layers.Masking(mask_value=0.0)(inputs)
 
     # Bidirectional LSTM captures both forward and backward temporal patterns
+    # recurrent_dropout must stay 0. A non-zero value disables the fast LSTM kernel.
     x = layers.Bidirectional(
         layers.LSTM(config.LSTM_UNITS_1, return_sequences=True,
-                    dropout=0.1, recurrent_dropout=0.1)
+                    dropout=0.1, recurrent_dropout=0.0)
     )(x)
     x = layers.Dropout(config.DROPOUT_RATE)(x)
 
     x = layers.LSTM(config.LSTM_UNITS_2, return_sequences=False,
-                    dropout=0.1, recurrent_dropout=0.1)(x)
+                    dropout=0.1, recurrent_dropout=0.0)(x)
     x = layers.Dropout(0.2)(x)
 
     x = layers.Dense(config.DENSE_UNITS, activation="relu")(x)
