@@ -6,4 +6,3 @@ scikit-learn==1.9.1
 matplotlib==3.11.2
 pytest==9.1.1
 python-dotenv==1.2.3
-google-generativeai==0.8.6
